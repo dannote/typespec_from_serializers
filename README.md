@@ -1,9 +1,7 @@
 <h1 align="center">
-Types From Serializers
+TypeSpec From Serializers
 <p align="center">
 <a href="https://github.com/dannote/typespec_from_serializers/actions"><img alt="Build Status" src="https://github.com/dannote/typespec_from_serializers/workflows/build/badge.svg"/></a>
-<a href="https://codeclimate.com/github/dannote/typespec_from_serializers"><img alt="Maintainability" src="https://codeclimate.com/github/dannote/typespec_from_serializers/badges/gpa.svg"/></a>
-<!-- <a href="https://codeclimate.com/github/dannote/typespec_from_serializers"><img alt="Test Coverage" src="https://codeclimate.com/github/dannote/typespec_from_serializers/badges/coverage.svg"/></a> -->
 <a href="https://rubygems.org/gems/typespec_from_serializers"><img alt="Gem Version" src="https://img.shields.io/gem/v/typespec_from_serializers.svg?colorB=e9573f"/></a>
 <a href="https://github.com/dannote/typespec_from_serializers/blob/master/LICENSE.txt"><img alt="License" src="https://img.shields.io/badge/license-MIT-428F7E.svg"/></a>
 </p>
