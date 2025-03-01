@@ -255,6 +255,39 @@ defineConfig({
 As a result, when modifying a serializer and hitting save, the type for that
 serializer will be updated instantly!
 
+### Routes Generation 🛤️
+
+In addition to generating TypeSpec models from serializers, `TypeSpecFromSerializers` can generate a
+`routes.tsp` file based on your Rails application's routes. This feature creates TypeSpec interfaces
+for your API endpoints, mapping Rails controllers and actions to HTTP operations.
+
+For example, given Rails routes like:
+
+```ruby
+Rails.application.routes.draw do
+  resources :videos, only: [:index, :show]
+end
+```
+
+The generator produces a `routes.tsp` file like:
+
+```typespec
+// routes.tsp
+import "@typespec/http";
+
+import "./models/Videos.tsp";
+
+using TypeSpec.Http;
+
+namespace Routes {
+  @route("/videos")
+  interface Videos {
+    @get list(): Videos[];
+    @get read(@path id: string): Videos;
+  }
+}
+```
+
 ## Configuration ⚙️
 
 You can configure generation in a Rails initializer:
@@ -291,7 +324,7 @@ The dirs where the serializer files are located.
 
 ### `output_dir`
 
-_Default:_ `"app/frontend/types/serializers"`
+_Default:_ `"app/frontend/typespec/generated"`
 
 The dir where the generated TypeSpec interface files are placed.
 
