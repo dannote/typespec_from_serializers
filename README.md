@@ -20,9 +20,45 @@ TypeSpec From Serializers
 [base_serializers]: https://github.com/dannote/typespec_from_serializers#base_serializers
 [config]: https://github.com/dannote/typespec_from_serializers#configuration-%EF%B8%8F
 
-Automatically generate TypeSpec descriptions from your [JSON serializers][oj_serializers]. A derivative work of [`types_from_serializers`][types_from_serializers] by ElMassimo, originally designed to generate TypeScript definitions.
+Automatically generate TypeSpec descriptions from your [JSON serializers][oj_serializers].
 
 _Currently, this library targets [`oj_serializers`][oj_serializers] and `ActiveRecord` in [Rails] applications_.
+
+## Why? 🤔
+
+It's easy for the backend and the frontend to become out of sync. Traditionally, preventing bugs
+requires writing extensive integration tests.
+
+[TypeSpec] is a great tool to catch this kind of bugs and mistakes, as it can define precise API
+specifications and detect mismatches, but writing these specifications manually is cumbersome,
+and they can become stale over time, giving a false sense of confidence.
+
+This library takes advantage of the declarative nature of serializer libraries such as
+[`active_model_serializers`][ams] and [`oj_serializers`][oj_serializers], extending them to allow
+embedding type information, as well as inferring types from the SQL schema when available.
+
+The project builds on [`types_from_serializers`][types_from_serializers] by ElMassimo, originally
+designed for TypeScript definitions, adapting it to generate [TypeSpec] specifications instead.
+This shift broadens interoperability with modern API specification tools and leverages TypeSpec’s
+strengths in defining RESTful APIs, including route generation from Rails applications, to create
+comprehensive, type-safe API descriptions.
+
+As a result, it's possible to easily detect mismatches between the backend and the frontend, as
+well as make the fields and endpoints more discoverable and provide great autocompletion in tools
+that support TypeSpec, without having to manually write the specifications.
+
+## Features ⚡️
+
+- Start simple, no additional syntax required
+- Infers types from a related `ActiveRecord` model, using the SQL schema
+- Understands TypeSpec native types and how to map SQL columns: `string`, `boolean`, etc
+- Automatically types [associations](https://github.com/ElMassimo/oj_serializers#associations-dsl-),
+importing the generated types for the referenced serializers
+- Detects [conditional attributes](https://github.com/ElMassimo/oj_serializers#rendering-an-attribute-conditionally)
+and marks them as optional: `name?: string`
+- Fallback to a custom interface using `typespec_from`
+- Supports custom types and automatically adds the necessary imports
+- Generates TypeSpec route interfaces from Rails routes, mapping controllers and actions to HTTP operations
 
 ## Demo 🎬
 
@@ -77,7 +113,6 @@ end
 this fork generates a TypeSpec model like:
 
 ```typespec
-// Video.tsp
 import "./Song.tsp";
 
 model Video {
@@ -270,7 +305,6 @@ end
 The generator produces a `routes.tsp` file like:
 
 ```typespec
-// routes.tsp
 import "@typespec/http";
 
 import "./models/Videos.tsp";
@@ -359,7 +393,7 @@ separately.
 
 ### `sql_to_typespec_type_mapping`
 
-Specifies [how to map](https://github.com/dannote/typespec_from_serializers/blob/main/typespec_from_serializers/lib/typespec_from_serializers/generator.rb#L297-L308) SQL column types to TypeSpec native and custom types.
+Specifies how to map SQL column types to TypeSpec native and custom types.
 
 ```ruby
 # Example: You have response middleware that automatically converts date strings

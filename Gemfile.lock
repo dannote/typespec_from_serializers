@@ -1,7 +1,7 @@
 PATH
   remote: typespec_from_serializers
   specs:
-    typespec_from_serializers (2.3.0)
+    typespec_from_serializers (0.1.1)
       listen (~> 3.2)
       oj_serializers (~> 2.0, >= 2.0.2)
       railties (>= 5.1)
