@@ -1,11 +1,11 @@
 <h1 align="center">
 Types From Serializers
 <p align="center">
-<a href="https://github.com/ElMassimo/types_from_serializers/actions"><img alt="Build Status" src="https://github.com/ElMassimo/types_from_serializers/workflows/build/badge.svg"/></a>
-<a href="https://codeclimate.com/github/ElMassimo/types_from_serializers"><img alt="Maintainability" src="https://codeclimate.com/github/ElMassimo/types_from_serializers/badges/gpa.svg"/></a>
-<!-- <a href="https://codeclimate.com/github/ElMassimo/types_from_serializers"><img alt="Test Coverage" src="https://codeclimate.com/github/ElMassimo/types_from_serializers/badges/coverage.svg"/></a> -->
-<a href="https://rubygems.org/gems/types_from_serializers"><img alt="Gem Version" src="https://img.shields.io/gem/v/types_from_serializers.svg?colorB=e9573f"/></a>
-<a href="https://github.com/ElMassimo/types_from_serializers/blob/master/LICENSE.txt"><img alt="License" src="https://img.shields.io/badge/license-MIT-428F7E.svg"/></a>
+<a href="https://github.com/dannote/typespec_from_serializers/actions"><img alt="Build Status" src="https://github.com/dannote/typespec_from_serializers/workflows/build/badge.svg"/></a>
+<a href="https://codeclimate.com/github/dannote/typespec_from_serializers"><img alt="Maintainability" src="https://codeclimate.com/github/dannote/typespec_from_serializers/badges/gpa.svg"/></a>
+<!-- <a href="https://codeclimate.com/github/dannote/typespec_from_serializers"><img alt="Test Coverage" src="https://codeclimate.com/github/dannote/typespec_from_serializers/badges/coverage.svg"/></a> -->
+<a href="https://rubygems.org/gems/typespec_from_serializers"><img alt="Gem Version" src="https://img.shields.io/gem/v/typespec_from_serializers.svg?colorB=e9573f"/></a>
+<a href="https://github.com/dannote/typespec_from_serializers/blob/master/LICENSE.txt"><img alt="License" src="https://img.shields.io/badge/license-MIT-428F7E.svg"/></a>
 </p>
 </h1>
 
@@ -13,123 +13,24 @@ Types From Serializers
 [oj_serializers]: https://github.com/ElMassimo/oj_serializers
 [ams]: https://github.com/rails-api/active_model_serializers
 [Rails]: https://github.com/rails/rails
-[Issues]: https://github.com/ElMassimo/types_from_serializers/issues?q=is%3Aissue+is%3Aopen+sort%3Aupdated-desc
-[Discussions]: https://github.com/ElMassimo/types_from_serializers/discussions
-[TypeScript]: https://www.typescriptlang.org/
+[Issues]: https://github.com/dannote/typespec_from_serializers/issues?q=is%3Aissue+is%3Aopen+sort%3Aupdated-desc
+[Discussions]: https://github.com/dannote/typespec_from_serializers/discussions
+[TypeSpec]: https://www.typespeclang.org/
 [Vite Ruby]: https://github.com/ElMassimo/vite_ruby
 [vite-plugin-full-reload]: https://github.com/ElMassimo/vite-plugin-full-reload
-[base_serializers]: https://github.com/ElMassimo/types_from_serializers#base_serializers
-[config]: https://github.com/ElMassimo/types_from_serializers#configuration-%EF%B8%8F
+[base_serializers]: https://github.com/dannote/typespec_from_serializers#base_serializers
+[config]: https://github.com/dannote/typespec_from_serializers#configuration-%EF%B8%8F
 
-Automatically generate TypeScript interfaces from your [JSON serializers][oj_serializers].
+Automatically generate TypeSpec descriptions from your [JSON serializers][oj_serializers].
 
 _Currently, this library targets [`oj_serializers`][oj_serializers] and `ActiveRecord` in [Rails] applications_.
-
-## Demo 🎬
-
-For a schema such as [this one](https://github.com/ElMassimo/types_from_serializers/blob/main/playground/vanilla/db/schema.rb):
-
-<details>
-  <summary>DB Schema</summary>
-
-```ruby
-  create_table "composers", force: :cascade do |t|
-    t.text "first_name"
-    t.text "last_name"
-    t.datetime "created_at", precision: 6, null: false
-    t.datetime "updated_at", precision: 6, null: false
-  end
-
-  create_table "songs", force: :cascade do |t|
-    t.text "title"
-    t.integer "composer_id"
-    t.datetime "created_at", precision: 6, null: false
-    t.datetime "updated_at", precision: 6, null: false
-  end
-
-  create_table "video_clips", force: :cascade do |t|
-    t.text "title"
-    t.text "youtube_id"
-    t.integer "song_id"
-    t.integer "composer_id"
-    t.datetime "created_at", precision: 6, null: false
-    t.datetime "updated_at", precision: 6, null: false
-  end
-```
-</details>
-
-and a serializer like the following:
-
-```ruby
-class VideoSerializer < BaseSerializer
-  object_as :video, model: :VideoClip
-
-  attributes :id, :created_at, :title, :youtube_id
-
-  type :string, optional: true
-  def youtube_url
-    "https://www.youtube.com/watch?v=#{video.youtube_id}" if video.youtube_id
-  end
-
-  has_one :song, serializer: SongSerializer
-end
-```
-
-it would generate a TypeScript interface like:
-
-```ts
-import type Song from './Song'
-
-export default interface Video {
-  id: number
-  createdAt: string | Date
-  title?: string
-  youtubeId?: string
-  youtubeUrl?: string
-  song: Song
-}
-```
-
-> **Note**
->
-> This is the default configuration, but you have [full control][config] over generation.
-
-
-## Why? 🤔
-
-It's easy for the backend and the frontend to become out of sync.
-Traditionally, preventing bugs requires writing extensive integration tests.
-
-[TypeScript] is a great tool to catch this kind of bugs and mistakes, as it can
-detect incorrect usages and missing fields, but writing types manually is
-cumbersome, and they can become stale over time, giving a false sense of confidence.
-
-This library takes advantage of the declarative nature of serializer libraries
-such as [`active_model_serializers`][ams] and [`oj_serializers`][oj_serializers],
-extending them to allow embedding type information, as well as inferring types
-from the SQL schema when available.
-
-As a result, it's posible to easily detect mismatches between the backend and
-the frontend, as well as make the fields more discoverable and provide great
-autocompletion in the frontend, without having to manually write the types.
-
-## Features ⚡️
-
-- Start simple, no additional syntax required
-- Infers types from a related `ActiveRecord` model, using the SQL schema
-- Understands JS native types and how to map SQL columns: `string`, `boolean`, etc
-- Automatically types [associations](https://github.com/ElMassimo/oj_serializers#associations-dsl-), importing the generated types for the referenced serializers
-- Detects [conditional attributes](https://github.com/ElMassimo/oj_serializers#rendering-an-attribute-conditionally) and marks them as optional: `name?: string`
-- Fallback to a custom interface using `type_from`
-- Supports custom types and automatically adds the necessary imports
-
 
 ## Installation 💿
 
 Add this line to your application's Gemfile:
 
 ```ruby
-gem 'types_from_serializers'
+gem 'typespec_from_serializers'
 ```
 
 And then run:
@@ -138,13 +39,13 @@ And then run:
 
 ## Usage 🚀
 
-To get started, [create a `BaseSerializer`](https://github.com/ElMassimo/types_from_serializers/blob/main/playground/vanilla/app/serializers/base_serializer.rb) that extends [`Oj::Serializer`][oj_serializers], and include the `TypesFromSerializers::DSL` module.
+To get started, [create a `BaseSerializer`](https://github.com/dannote/typespec_from_serializers/blob/main/playground/vanilla/app/serializers/base_serializer.rb) that extends [`Oj::Serializer`][oj_serializers], and include the `TypeSpecFromSerializers::DSL` module.
 
 ```ruby
 # app/serializers/base_serializer.rb
 
 class BaseSerializer < Oj::Serializer
-  include TypesFromSerializers::DSL
+  include TypeSpecFromSerializers::DSL
 end
 ```
 
@@ -160,7 +61,7 @@ detected.
 
 ### SQL Attributes
 
-In most cases, you'll want to let `TypesFromSerializers` infer the types from the [SQL schema](https://github.com/ElMassimo/types_from_serializers/blob/main/playground/vanilla/db/schema.rb).
+In most cases, you'll want to let `TypeSpecFromSerializers` infer the types from the [SQL schema](https://github.com/dannote/typespec_from_serializers/blob/main/playground/vanilla/db/schema.rb).
 
 If you are using `ActiveRecord`, the model related to the serializer will be inferred can be inferred from the serializer name:
 
@@ -189,7 +90,7 @@ When you want to be more strict than the SQL schema, or for attributes that are 
 ```ruby
   attributes(
     name: {type: :string},
-    status: {type: :Status}, # a custom type in ~/types/Status.ts
+    status: {type: :Status}, # a custom type in ~/typespec/Status.tsp
   )
 ```
 
@@ -210,12 +111,12 @@ For attributes defined in the serializer, use the `type` helper:
 
 ### Fallback Attributes
 
-You can also specify `types_from` to provide a TypeScript interface that should
+You can also specify `typespec_from` to provide a TypeSpec model that should
 be used to obtain the field types:
 
 ```ruby
 class LocationSerializer < BaseSerializer
-  object_as :location, types_from: :GoogleMapsLocation
+  object_as :location, typespec_from: :GoogleMapsLocation
 
   attributes(
     :lat,
@@ -224,12 +125,12 @@ class LocationSerializer < BaseSerializer
 end
 ```
 
-```ts
-import GoogleMapsLocation from '~/types/GoogleMapsLocation'
+```typespec
+import "./typespec/GoogleMapsLocation.tsp";
 
-export default interface Location {
-  lat: GoogleMapsLocation['lat']
-  lng: GoogleMapsLocation['lng']
+model Location {
+  lat: GoogleMapsLocation.lat::type;
+  lng: GoogleMapsLocation.lng::type;
 }
 ```
 
@@ -237,7 +138,7 @@ export default interface Location {
 
 To get started, run `bin/rails s` to start the `Rails` development server.
 
-`TypesFromSerializers` will automatically register a `Rails` reloader, which
+`TypeSpecFromSerializers` will automatically register a `Rails` reloader, which
 detects changes to serializer files, and will generate code on-demand only for
 the modified files.
 
@@ -249,15 +150,15 @@ the generated code accordingly.
 To generate types manually, use the rake task:
 
 ```
-bundle exec rake types_from_serializers:generate
+bundle exec rake typespec_from_serializers:generate
 ```
 
 or if you prefer to do it manually from the console:
 
 ```ruby
-require "types_from_serializers/generator"
+require "typespec_from_serializers/generator"
 
-TypesFromSerializers.generate(force: true)
+TypeSpecFromSerializers.generate(force: true)
 ```
 
 ### With [`vite-plugin-full-reload`][vite-plugin-full-reload] ⚡️
@@ -267,7 +168,7 @@ to automatically reload the page when modifying serializers, causing the Rails
 reload process to be triggered, which is when generation occurs.
 
 ```ts
-// vite.config.ts
+// vite.config.tsp
 import { defineConfig } from 'vite'
 import ruby from 'vite-plugin-ruby'
 import reloadOnChange from 'vite-plugin-full-reload'
@@ -288,10 +189,10 @@ serializer will be updated instantly!
 You can configure generation in a Rails initializer:
 
 ```ruby
-# config/initializers/types_from_serializers.rb
+# config/initializers/typespec_from_serializers.rb
 
 if Rails.env.development?
-  TypesFromSerializers.config do |config|
+  TypeSpecFromSerializers.config do |config|
     config.name_from_serializer = ->(name) { name }
   end
 end
@@ -301,7 +202,7 @@ end
 
 _Default:_ `nil`
 
-Allows to specify a TypeScript namespace and generate `.d.ts` to make types
+Allows to specify a TypeSpec namespace and generate `.tsp` to make types
 available globally, avoiding the need to import types explicitly.
 
 ### `base_serializers`
@@ -321,9 +222,9 @@ The dirs where the serializer files are located.
 
 _Default:_ `"app/frontend/types/serializers"`
 
-The dir where the generated TypeScript interface files are placed.
+The dir where the generated TypeSpec interface files are placed.
 
-### `custom_types_dir`
+### `custom_typespec_dir`
 
 _Default:_ `"app/frontend/types"`
 
@@ -334,13 +235,13 @@ The dir where the custom types are placed.
 _Default:_ `->(name) { name.delete_suffix("Serializer") }`
 
 A `Proc` that specifies how to convert the name of the serializer into the name
-of the generated TypeScript interface.
+of the generated TypeSpec interface.
 
 ### `global_types`
 
 _Default:_ `["Array", "Record", "Date"]`
 
-Types that don't need to be imported in TypeScript.
+Types that don't need to be imported in TypeSpec.
 
 You can extend this list as needed if you are using global definitions.
 
@@ -354,28 +255,24 @@ Along with `base_serializers`, this provides more fine-grained control in cases
 where a single backend supports several frontends, allowing to generate types
 separately.
 
-### `sql_to_typescript_type_mapping`
+### `sql_to_typespec_type_mapping`
 
-Specifies [how to map](https://github.com/ElMassimo/types_from_serializers/blob/main/types_from_serializers/lib/types_from_serializers/generator.rb#L297-L308) SQL column types to TypeScript native and custom types.
+Specifies [how to map](https://github.com/dannote/typespec_from_serializers/blob/main/typespec_from_serializers/lib/typespec_from_serializers/generator.rb#L297-L308) SQL column types to TypeSpec native and custom types.
 
 ```ruby
 # Example: You have response middleware that automatically converts date strings
-# into Date objects, and you want TypeScript to treat those fields as `Date`.
-config.sql_to_typescript_type_mapping.update(
-  date: :Date,
-  datetime: :Date,
+# into Date objects, and you want TypeSpec to treat those fields as `plainDate`.
+config.sql_to_typespec_type_mapping.update(
+  date: :plainDate,
+  datetime: :utcDateTime,
 )
 
 # Example: You won't transform fields when receiving data in the frontend
 # (date fields are serialized to JSON as strings).
-config.sql_to_typescript_type_mapping.update(
+config.sql_to_typespec_type_mapping.update(
   date: :string,
-  datetime: :string,
+  datetime: :utcDateTime,
 )
-
-# Example: You plan to introduce types slowly, and don't want to be strict with
-# untyped fields, so treat them as `any` instead of `unknown`.
-config.sql_to_typescript_type_mapping.default = :any
 ```
 
 ### `transform_keys`

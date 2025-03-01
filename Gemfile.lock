@@ -1,7 +1,7 @@
 PATH
-  remote: types_from_serializers
+  remote: typespec_from_serializers
   specs:
-    types_from_serializers (2.3.0)
+    typespec_from_serializers (2.3.0)
       listen (~> 3.2)
       oj_serializers (~> 2.0, >= 2.0.2)
       railties (>= 5.1)
@@ -187,7 +187,7 @@ DEPENDENCIES
   simplecov (< 0.18)
   sqlite3
   standard (~> 1.0)
-  types_from_serializers!
+  typespec_from_serializers!
 
 BUNDLED WITH
    2.4.10

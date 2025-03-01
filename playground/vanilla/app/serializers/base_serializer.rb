@@ -1,3 +1,3 @@
 class BaseSerializer < Oj::Serializer
-  include TypesFromSerializers::DSL
+  include TypeSpecFromSerializers::DSL
 end

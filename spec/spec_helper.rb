@@ -7,7 +7,7 @@ SimpleCov.start {
 ENV["RACK_ENV"] = "development"
 require "rails"
 require "oj_serializers"
-require "types_from_serializers"
+require "typespec_from_serializers"
 require "rspec/given"
 
 begin

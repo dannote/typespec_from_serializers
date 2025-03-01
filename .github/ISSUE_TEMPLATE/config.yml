@@ -4,5 +4,5 @@ contact_links:
     url: https://types-from-serializers.netlify.app/faqs/
     about: 'Please check the most common problems before opening an issue'
   - name: Questions & Discussions
-    url: https://github.com/ElMassimo/types_from_serializers/discussions
+    url: https://github.com/dannote/typespec_from_serializers/discussions
     about: Use GitHub discussions for message-board style questions and discussions.

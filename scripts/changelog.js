@@ -4,14 +4,14 @@ const args = require('minimist')(process.argv.slice(2))
 const execa = require('execa')
 const chalk = require('chalk')
 
-const name = args._[0]?.trim() || 'types_from_serializers'
+const name = args._[0]?.trim() || 'typespec_from_serializers'
 
 if (!name) {
   console.error(chalk.red(`Expected library name as an argument, received ${name}`))
   process.exit(1)
 }
 
-const isRubyPackage = name === 'types_from_serializers'
+const isRubyPackage = name === 'typespec_from_serializers'
 const packagePath = isRubyPackage ? name : `packages/${name}`
 
 /**

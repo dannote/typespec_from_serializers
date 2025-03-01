@@ -1,12 +1,12 @@
 {
-  "name": "types_from_serializers_monorepo",
+  "name": "typespec_from_serializers_monorepo",
   "version": "1.0.0",
   "private": true,
   "license": "MIT",
   "scripts": {
     "clean": "rm -rf playground/vanilla/app/frontend/types/serializers",
     "migrate": "cd playground/vanilla && bundle install && bin/rails db:prepare",
-    "gen": "cd playground/vanilla && bundle exec rake types_from_serializers:generate",
+    "gen": "cd playground/vanilla && bundle exec rake typespec_from_serializers:generate",
     "tsc": "npm -C playground/vanilla run tsc",
     "release": "node scripts/release",
     "lint": "eslint playground/vanilla/app/frontend scripts --ext .ts,.js,.vue",
@@ -41,9 +41,9 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/ElMassimo/types_from_serializers"
+    "url": "https://github.com/dannote/typespec_from_serializers"
   },
-  "homepage": "https://github.com/ElMassimo/types_from_serializers",
+  "homepage": "https://github.com/dannote/typespec_from_serializers",
   "pnpm": {
     "overrides": {
       "eslint-plugin-vue": "9.2.0"

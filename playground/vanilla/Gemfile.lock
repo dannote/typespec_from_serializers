@@ -1,7 +1,7 @@
 PATH
   remote: ../..
   specs:
-    types_from_serializers (2.2.0)
+    typespec_from_serializers (2.3.0)
       listen (~> 3.2)
       oj_serializers (~> 2.0, >= 2.0.2)
       railties (>= 5.1)
@@ -191,6 +191,10 @@ GEM
     thor (1.2.1)
     thread_safe (0.3.6)
     timeout (0.3.2)
+    types_from_serializers (2.3.0)
+      listen (~> 3.2)
+      oj_serializers (~> 2.0, >= 2.0.2)
+      railties (>= 5.1)
     tzinfo (1.2.11)
       thread_safe (~> 0.1)
     vite_rails (3.0.14)
@@ -219,7 +223,8 @@ DEPENDENCIES
   rails-controller-testing
   rspec-rails
   sqlite3
-  types_from_serializers!
+  types_from_serializers
+  typespec_from_serializers!
   vite_rails
 
 BUNDLED WITH

@@ -8,7 +8,7 @@ assignees: ''
 
 [troubleshooting section]: https://types-from-serializers.netlify.app/faqs/
 
-- [ ] I have tried upgrading by running `bundle update types_from_serializers`.
+- [ ] I have tried upgrading by running `bundle update typespec_from_serializers`.
 - [ ] I have read the __[troubleshooting section]__ before opening an issue.
 
 ### Description 📖

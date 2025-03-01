@@ -9,14 +9,14 @@ const semver = require('semver')
 const chalk = require('chalk')
 const { prompt } = require('enquirer')
 
-const name = args._[0]?.trim() || 'types_from_serializers'
+const name = args._[0]?.trim() || 'typespec_from_serializers'
 let targetVersion = args._[1]
 if (!name) {
   console.error(chalk.red(`Expected library name as an argument, received ${name}`))
   process.exit(1)
 }
 
-const isRubyLibrary = name === 'types_from_serializers'
+const isRubyLibrary = name === 'typespec_from_serializers'
 const packagePath = isRubyLibrary ? name : `packages/${name}`
 const pkg = isRubyLibrary ? rubyPackage() : jsPackage()
 

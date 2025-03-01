@@ -1,5 +1,5 @@
 class ModelSerializer < BaseSerializer
-  object_as :model, types_from: :AnyModel
+  object_as :model, typespec_from: :AnyModel
 
   attributes(
     :id,
