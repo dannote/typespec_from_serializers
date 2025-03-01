@@ -1,6 +1,6 @@
 class VideosController < ApplicationController
   def index
-    render_page videos: VideoWithSongSerializer.many(VideoClip.all.order(:created_at))
+    render_page videos: VideoWithSongSerializer.many(VideoClip.order(:created_at))
   end
 
   def show

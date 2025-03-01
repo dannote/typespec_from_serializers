@@ -1,6 +1,6 @@
 class SongsController < ApplicationController
   def index
-    render_page songs: SongSerializer.many(Song.all.order(:title))
+    render_page songs: SongSerializer.many(Song.order(:title))
   end
 
   def show

@@ -4,7 +4,7 @@ require "digest"
 require "fileutils"
 require "pathname"
 
-# Public: Automatically generates TypeSpec descriptions for Ruby serializers.
+# Public: Automatically generates TypeSpec descriptions for Ruby serializers and Rails routes.
 module TypeSpecFromSerializers
   DEFAULT_TRANSFORM_KEYS = ->(key) { key.camelize(:lower).chomp("?") }
 
@@ -94,13 +94,14 @@ module TypeSpecFromSerializers
     :global_types,
     :sort_properties_by,
     :sql_to_typespec_type_mapping,
+    :action_to_operation_mapping,
     :skip_serializer_if,
     :transform_keys,
     :namespace,
     keyword_init: true,
   ) do
     def relative_custom_typespec_dir
-      @relative_custom_typespec_dir ||= (custom_typespec_dir || output_dir.parent).relative_path_from(output_dir)
+      @relative_custom_typespec_dir ||= (custom_typespec_dir || output_dir.parent).relative_path_from(output_dir.join("models"))
     end
 
     def unknown_type
@@ -217,6 +218,44 @@ module TypeSpecFromSerializers
     end
   end
 
+  # Internal: Represents a TypeSpec resource interface
+  Resource = Struct.new(:name, :path, :operations, keyword_init: true) do
+    def as_typespec
+      <<~TSP
+        #{"  " * 1}@route("#{path}")
+        #{"  " * 1}interface #{name} {
+        #{"  " * 1}#{operations.map(&:as_typespec).join("\n  ")}
+        #{"  " * 1}}
+      TSP
+    end
+  end
+
+  # Internal: Represents a TypeSpec operation within a resource
+  Operation = Struct.new(:method, :action, :path_params, :response_type, keyword_init: true) do
+    def as_typespec
+      method_map = {
+        "GET" => "get",
+        "POST" => "post",
+        "PUT" => "put",
+        "PATCH" => "patch",
+        "DELETE" => "delete",
+      }
+      tsp_method = method_map[method] || method.downcase
+      operation_name = TypeSpecFromSerializers.config.action_to_operation_mapping[action] || action
+      params = params_typespec
+      params_str = params.empty? ? "()" : "(#{params})"
+
+      "#{"  " * 1}@#{tsp_method} #{operation_name}#{params_str}: #{response_type.gsub("::", "")};"
+    end
+
+    def params_typespec
+      params = []
+      params += path_params.map { |param| "@path #{param}: string" } if path_params.any?
+      params << "@body body: #{response_type.gsub("::", "")}" if %w[POST PUT PATCH].include?(method)
+      params.join(", ")
+    end
+  end
+
   # Internal: Structure to keep track of changed files.
   class Changes
     def initialize(dirs)
@@ -282,6 +321,8 @@ module TypeSpecFromSerializers
         generate_index_file
       end
 
+      generate_routes
+
       loaded_serializers.each do |serializer|
         generate_model_for(serializer)
       end
@@ -300,7 +341,7 @@ module TypeSpecFromSerializers
     def generate_model_for(serializer)
       model = serializer.tsp_model
 
-      write_if_changed(filename: model.filename, cache_key: model.inspect, extension: "tsp") {
+      write_if_changed(filename: "models/#{model.filename}", cache_key: model.inspect, extension: "tsp") {
         serializer_model_content(model)
       }
     end
@@ -311,6 +352,17 @@ module TypeSpecFromSerializers
       write_if_changed(filename: "index", cache_key: cache_key) {
         load_serializers(all_serializer_files)
         serializers_index_content(loaded_serializers)
+      }
+    end
+
+    # Internal: Generates TypeSpec routes from Rails routes
+    def generate_routes
+      return unless defined?(Rails) && Rails.application
+
+      routes = collect_rails_routes
+      cache_key = routes.map { |r| r.operations.map { |op| "#{op.method}#{r.path}#{op.action}" }.join }.join
+      write_if_changed(filename: "routes", cache_key: cache_key) {
+        routes_content(routes)
       }
     end
 
@@ -353,6 +405,89 @@ module TypeSpecFromSerializers
       raise ArgumentError, "Please ensure all your serializers extend BaseSerializer, or configure `config.base_serializers`."
     end
 
+    # Internal: Collects routes from Rails and groups them into resources
+    def collect_rails_routes
+      return [] unless defined?(Rails) && Rails.application
+
+      routes_by_controller = Rails.application.routes.routes.each_with_object(Hash.new { |h, k| h[k] = [] }) do |route, hash|
+        next unless route.defaults[:controller] && route.verb.present?
+
+        controller = route.defaults[:controller]
+        action = route.defaults[:action]
+        method = route.verb.split("|").first
+        path = route.path.spec.to_s.sub("(.:format)", "")
+        response_type = infer_response_type(controller, action) || "unknown"
+
+        unless hash[controller].any? { |r| r[:method] == method && r[:action] == action }
+          hash[controller] << {
+            method: method,
+            action: action,
+            path: path,
+            response_type: response_type,
+          }
+        end
+      end
+
+      routes_by_controller.map do |controller, routes|
+        path_segments = routes.map { |r| r[:path].split("/")[1..-1] || [] }.uniq.sort_by(&:length)
+        base_path = path_segments.any? ? path_segments.first.join("/")&.split("/{")&.first || controller : controller
+
+        operations = routes.map do |route|
+          path_params = route[:path].scan(/{([^}]+)}/).flatten
+          response_type = if route[:response_type] == route[:action]
+            "unknown"
+          else
+            (route[:action] == "index") ? "#{route[:response_type]}[]" : route[:response_type]
+          end
+          Operation.new(
+            method: route[:method],
+            action: route[:action],
+            path_params: (route[:action] == "show") ? ["id"] : path_params,
+            response_type: response_type,
+          )
+        end
+        Resource.new(
+          name: controller.tr("/", "_").camelize,
+          path: "/#{base_path}",
+          operations: operations,
+        )
+      end
+    end
+
+    # Internal: Infers the response type based on controller and action
+    def infer_response_type(controller, action)
+      controller_class = "#{controller.camelize}Controller".safe_constantize
+      return nil unless controller_class
+
+      model_name = controller.singularize.camelize
+      serializer_class = "#{model_name}Serializer".safe_constantize
+      serializer_class&.tsp_name
+    end
+
+    # Internal: Generates the routes.tsp content with resources
+    def routes_content(routes)
+      imports = routes.flat_map { |r| r.operations.map(&:response_type) }.compact.uniq.map do |type|
+        base_type = (type || "unknown").split("[]").first.gsub("::", "")
+        next if base_type == "unknown"
+        relative_path = "./#{base_type}.tsp"
+        %(import "#{relative_path}";\n)
+      end.compact.uniq.join
+
+      resources = routes.map(&:as_typespec).join("\n").strip
+      <<~TSP
+        //
+        // DO NOT MODIFY: This file was automatically generated by TypeSpecFromSerializers.
+        import "@typespec/http";
+        
+        #{imports}
+        using TypeSpec.Http;
+
+        namespace Routes {
+          #{resources}
+        }
+      TSP
+    end
+
     def default_config(root)
       Config.new(
         # The base serializers that all other serializers extend.
@@ -362,7 +497,7 @@ module TypeSpecFromSerializers
         serializers_dirs: [root.join("app/serializers").to_s],
 
         # The dir where model files are placed.
-        output_dir: root.join(defined?(ViteRuby) ? ViteRuby.config.source_code_dir : "app/frontend").join("typespec/serializers"),
+        output_dir: root.join(defined?(ViteRuby) ? ViteRuby.config.source_code_dir : "app/frontend").join("typespec/generated"),
 
         # Remove the serializer suffix from the class name.
         name_from_serializer: ->(name) {
@@ -409,6 +544,15 @@ module TypeSpecFromSerializers
           uuid: :string,
         },
 
+        # Map Rails actions to TypeSpec operations
+        action_to_operation_mapping: {
+          "index" => "list",
+          "show" => "read",
+          "create" => "create",
+          "update" => "update",
+          "destroy" => "delete",
+        },
+
         # Allows to transform keys, useful when converting objects client-side.
         transform_keys: nil,
 
@@ -438,8 +582,10 @@ module TypeSpecFromSerializers
       <<~TSP
         //
         // DO NOT MODIFY: This file was automatically generated by TypeSpecFromSerializers.
+
+        import "./routes.tsp";
         #{serializers.reject(&:inline_serializer?).map { |s|
-          %(import "./#{s.tsp_filename}.tsp";)
+          %(import "./models/#{s.tsp_filename}.tsp";)
         }.join("\n")}
       TSP
     end

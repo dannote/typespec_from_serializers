@@ -1,5 +1,5 @@
-import "./serializers/Video.tsp";
-import "./serializers/Song.tsp";
+import "./generated/models/Video.tsp";
+import "./generated/models/Song.tsp";
 
 model AnyModel {
   id: int32;

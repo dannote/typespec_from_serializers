@@ -28,7 +28,7 @@ describe "Generator" do
   end
 
   def output_file_for(name, ext = "tsp")
-    file_for(output_dir, name, ext)
+    file_for(output_dir.join("models"), name, ext)
   end
 
   def expect_generator
@@ -71,6 +71,11 @@ describe "Generator" do
       index_file = output_dir.join("index.tsp")
       expect(index_file.exist?).to be true
       expect(index_file.read).to match_snapshot("models_index") # UPDATE_SNAPSHOTS="1" bin/rspec
+
+      # It generates a routes file
+      routes_file = output_dir.join("routes.tsp")
+      expect(routes_file.exist?).to be true
+      expect(routes_file.read).to match_snapshot("routes_default") # UPDATE_SNAPSHOTS="1" bin/rspec
 
       # It does not render if generating again.
       TypeSpecFromSerializers.generate
