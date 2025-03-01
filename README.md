@@ -11,19 +11,90 @@ Types From Serializers
 
 [oj]: https://github.com/ohler55/oj
 [oj_serializers]: https://github.com/ElMassimo/oj_serializers
+[types_from_serializers]: https://github.com/ElMassimo/types_from_serializers
 [ams]: https://github.com/rails-api/active_model_serializers
 [Rails]: https://github.com/rails/rails
 [Issues]: https://github.com/dannote/typespec_from_serializers/issues?q=is%3Aissue+is%3Aopen+sort%3Aupdated-desc
 [Discussions]: https://github.com/dannote/typespec_from_serializers/discussions
-[TypeSpec]: https://www.typespeclang.org/
+[TypeSpec]: https://typespec.io
 [Vite Ruby]: https://github.com/ElMassimo/vite_ruby
 [vite-plugin-full-reload]: https://github.com/ElMassimo/vite-plugin-full-reload
 [base_serializers]: https://github.com/dannote/typespec_from_serializers#base_serializers
 [config]: https://github.com/dannote/typespec_from_serializers#configuration-%EF%B8%8F
 
-Automatically generate TypeSpec descriptions from your [JSON serializers][oj_serializers].
+Automatically generate TypeSpec descriptions from your [JSON serializers][oj_serializers]. A derivative work of [`types_from_serializers`][types_from_serializers] by ElMassimo, originally designed to generate TypeScript definitions.
 
 _Currently, this library targets [`oj_serializers`][oj_serializers] and `ActiveRecord` in [Rails] applications_.
+
+## Demo 🎬
+
+For a database schema like [this one](https://github.com/dannote/typespec_from_serializers/blob/main/playground/vanilla/db/schema.rb):
+
+<details>
+  <summary>DB Schema</summary>
+
+```ruby
+  create_table "composers", force: :cascade do |t|
+    t.text "first_name"
+    t.text "last_name"
+    t.datetime "created_at", precision: 6, null: false
+    t.datetime "updated_at", precision: 6, null: false
+  end
+
+  create_table "songs", force: :cascade do |t|
+    t.text "title"
+    t.integer "composer_id"
+    t.datetime "created_at", precision: 6, null: false
+    t.datetime "updated_at", precision: 6, null: false
+  end
+
+  create_table "video_clips", force: :cascade do |t|
+    t.text "title"
+    t.text "youtube_id"
+    t.integer "song_id"
+    t.integer "composer_id"
+    t.datetime "created_at", precision: 6, null: false
+    t.datetime "updated_at", precision: 6, null: false
+  end
+```
+</details>
+
+and a serializer like this:
+
+```ruby
+class VideoSerializer < BaseSerializer
+  object_as :video, model: :VideoClip
+
+  attributes :id, :created_at, :title, :youtube_id
+
+  type :string, optional: true
+  def youtube_url
+    "https://www.youtube.com/watch?v=#{video.youtube_id}" if video.youtube_id
+  end
+
+  has_one :song, serializer: SongSerializer
+end
+```
+
+this fork generates a TypeSpec model like:
+
+```typespec
+// Video.tsp
+import "./Song.tsp";
+
+model Video {
+  id: int32;
+  createdAt: utcDateTime;
+  title?: string;
+  youtubeId?: string;
+  youtubeUrl?: string;
+  song: Song;
+}
+```
+
+> **Note**
+>
+> This reflects the default setup for TypeSpec generation. You can customize everything—check out the [configuration options][config] for full control!
 
 ## Installation 💿
 
