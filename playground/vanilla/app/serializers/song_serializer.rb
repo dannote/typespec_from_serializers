@@ -4,6 +4,8 @@ class SongSerializer < BaseSerializer
     :title,
     :genre,
     :tempo,
+    :display_name,
+    :duration_minutes,
   )
 
   has_one :composer, serializer: ComposerSerializer

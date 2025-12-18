@@ -6,12 +6,9 @@ class VideoSerializer < BaseSerializer
     :created_at,
     :title,
     :youtube_id,
+    :youtube_url,
+    :tags,
   )
-
-  type :string, optional: true
-  def youtube_url
-    video.youtube_url
-  end
 
   attribute :untyped_field_example do
   end

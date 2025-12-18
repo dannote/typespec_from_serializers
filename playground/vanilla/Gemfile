@@ -32,4 +32,5 @@ group :development, :test do
   gem "debug"
   gem "rspec-rails"
   gem "rails-controller-testing"
+  gem "sorbet-runtime"
 end

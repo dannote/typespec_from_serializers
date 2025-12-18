@@ -4,8 +4,10 @@
 import "../../../AnyModel.tsp";
 import "../Song.tsp";
 
-model NestedAlbum {
-  id: AnyModel.id::type;
-  title: AnyModel.title::type;
-  tracks: Song[];
+namespace SampleApp {
+  model NestedAlbum {
+    id: AnyModel.id::type;
+    title: AnyModel.title::type;
+    tracks: Song[];
+  }
 }

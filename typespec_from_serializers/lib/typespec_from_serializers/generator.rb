@@ -8,6 +8,18 @@ require "pathname"
 module TypeSpecFromSerializers
   DEFAULT_TRANSFORM_KEYS = ->(key) { key.camelize(:lower).chomp("?") }
 
+  # TypeSpec language keywords that are always problematic
+  TYPESPEC_LANGUAGE_KEYWORDS = %w[
+    using extends is import model scalar enum union interface
+    namespace op alias true false null
+  ].to_set.freeze
+
+  # TypeSpec Reflection types that conflict only at global scope
+  # When using a namespace, these names are safe (e.g., MyAPI.Model is OK)
+  TYPESPEC_REFLECTION_TYPES = %w[
+    Model Scalar Enum Union Interface Operation Namespace
+  ].to_set.freeze
+
   # Internal: Extensions that simplify the implementation of the generator.
   module SerializerRefinements
     refine String do
@@ -30,7 +42,16 @@ module TypeSpecFromSerializers
     refine Class do
       # Internal: Name of the TypeSpec model.
       def tsp_name
-        TypeSpecFromSerializers.config.name_from_serializer.call(name).tr_s(":", "")
+        transformed = TypeSpecFromSerializers.config.name_from_serializer.call(name).tr_s(":", "")
+
+        # Only check for reflection type conflicts if no namespace is configured
+        # When using a namespace, Model becomes MyNamespace.Model which doesn't conflict
+        if TypeSpecFromSerializers.config.namespace.nil? && TYPESPEC_REFLECTION_TYPES.include?(transformed)
+          warn "Warning: TypeSpec model name '#{transformed}' conflicts with reserved keyword. Renaming to '#{transformed}_'. Use config.namespace to avoid this."
+          "#{transformed}_"
+        else
+          transformed
+        end
       end
 
       # Internal: The base name of the TypeSpec file to be written.
@@ -66,7 +87,7 @@ module TypeSpecFromSerializers
                   multi: options[:association] == :many,
                   column_name: options.fetch(:value_from),
                 ).tap do |property|
-                  property.infer_typespec_from(model_columns, model_enums, typespec_from)
+                  property.infer_typespec_from(model_columns, model_enums, typespec_from, self, model_class)
                 end
               end
             }
@@ -94,10 +115,12 @@ module TypeSpecFromSerializers
     :global_types,
     :sort_properties_by,
     :sql_to_typespec_type_mapping,
+    :sorbet_to_typespec_type_mapping,
     :action_to_operation_mapping,
     :skip_serializer_if,
     :transform_keys,
     :namespace,
+    :export_if,
     keyword_init: true,
   ) do
     def relative_custom_typespec_dir
@@ -193,18 +216,54 @@ module TypeSpecFromSerializers
 
     # Internal: Infers the property's type by checking a corresponding SQL
     # column, or falling back to a TypeSpec model if provided.
-    def infer_typespec_from(columns_hash, defined_enums, tsp_model)
+    def infer_typespec_from(columns_hash, defined_enums, tsp_model, serializer_class = nil, model_class = nil)
+      # Priority 1: Explicit type (already set via DSL)
       if type
-        type
-      elsif (enum = defined_enums[column_name.to_s])
+        return type
+      end
+
+      # Priority 2: Sorbet method signature on serializer (if available)
+      if serializer_class && SorbetTypeExtractor.available?
+        sorbet_info = SorbetTypeExtractor.extract_type_for(serializer_class, column_name)
+        if sorbet_info
+          self.type = sorbet_info[:typespec_type]
+          self.optional = true if sorbet_info[:nilable]
+          self.multi = true if sorbet_info[:array]
+          return type
+        end
+      end
+
+      # Priority 2b: Sorbet method signature on model (if available)
+      if model_class && SorbetTypeExtractor.available?
+        sorbet_info = SorbetTypeExtractor.extract_type_for(model_class, column_name)
+        if sorbet_info
+          self.type = sorbet_info[:typespec_type]
+          self.optional = true if sorbet_info[:nilable]
+          self.multi = true if sorbet_info[:array]
+          return type
+        end
+      end
+
+      # Priority 3: ActiveRecord enums
+      if (enum = defined_enums[column_name.to_s])
         self.type = enum.keys.map(&:inspect).join(" | ")
-      elsif (column = columns_hash[column_name.to_s])
+        return type
+      end
+
+      # Priority 4: SQL schema columns
+      if (column = columns_hash[column_name.to_s])
         self.multi = true if column.try(:array)
         self.optional = true if column.null && !column.default
         self.type = TypeSpecFromSerializers.config.sql_to_typespec_type_mapping[column.type]
-      elsif tsp_model
+        return type
+      end
+
+      # Priority 5: TypeSpec model fallback
+      if tsp_model
         self.type = "#{tsp_model}.#{name}::type"
       end
+
+      type
     end
 
     def as_typespec
@@ -214,7 +273,22 @@ module TypeSpecFromSerializers
         type || TypeSpecFromSerializers.config.unknown_type
       end
 
-      "#{name}#{"?" if optional}: #{type_str}#{"[]" if multi};"
+      escaped_name = escape_field_name(name)
+      "#{escaped_name}#{"?" if optional}: #{type_str}#{"[]" if multi};"
+    end
+
+    private
+
+    def escape_field_name(field_name)
+      # Escape field names that conflict with TypeSpec keywords using backticks
+      all_keywords = TYPESPEC_LANGUAGE_KEYWORDS +
+                     TYPESPEC_REFLECTION_TYPES.map(&:downcase)
+
+      if all_keywords.include?(field_name)
+        "`#{field_name}`"
+      else
+        field_name
+      end
     end
   end
 
@@ -410,15 +484,22 @@ module TypeSpecFromSerializers
       return [] unless defined?(Rails) && Rails.application
 
       routes_by_controller = Rails.application.routes.routes.each_with_object(Hash.new { |h, k| h[k] = [] }) do |route, hash|
+        # Filter routes based on export_if configuration (similar to js_from_routes)
         next unless route.defaults[:controller] && route.verb.present?
+        next unless config.export_if.call(route)
 
-        controller = route.defaults[:controller]
+        controller = namespace_for_route(route)
         action = route.defaults[:action]
-        method = route.verb.split("|").first
-        path = route.path.spec.to_s.sub("(.:format)", "")
-        response_type = infer_response_type(controller, action) || "unknown"
+        # Take the last verb from pipe-separated list (matches js_from_routes behavior)
+        method = route.verb.split("|").last
+        # Use chomp instead of sub for better path extraction (matches js_from_routes)
+        path = route.path.spec.to_s.chomp("(.:format)")
+        response_type = infer_response_type(route.defaults[:controller], action) || "unknown"
 
-        unless hash[controller].any? { |r| r[:method] == method && r[:action] == action }
+        # Reject duplicate PUT routes when PATCH exists for update action (js_from_routes pattern)
+        next if action == "update" && method == "PUT" && hash[controller].any? { |r| r[:action] == "update" && r[:method] == "PATCH" }
+
+        unless hash[controller].any? { |r| r[:method] == method && r[:action] == action && r[:path] == path }
           hash[controller] << {
             method: method,
             action: action,
@@ -454,6 +535,14 @@ module TypeSpecFromSerializers
       end
     end
 
+    # Internal: Extracts namespace from route export config or falls back to controller
+    # (based on js_from_routes pattern)
+    def namespace_for_route(route)
+      if (export = route.defaults[:export]).is_a?(Hash)
+        export[:namespace]
+      end || route.defaults[:controller]
+    end
+
     # Internal: Infers the response type based on controller and action
     def infer_response_type(controller, action)
       controller_class = "#{controller.camelize}Controller".safe_constantize
@@ -469,22 +558,38 @@ module TypeSpecFromSerializers
       imports = routes.flat_map { |r| r.operations.map(&:response_type) }.compact.uniq.map do |type|
         base_type = (type || "unknown").split("[]").first.gsub("::", "")
         next if base_type == "unknown"
-        relative_path = "./#{base_type}.tsp"
+        relative_path = "./models/#{base_type}.tsp"
         %(import "#{relative_path}";\n)
       end.compact.uniq.join
 
       resources = routes.map(&:as_typespec).join("\n").strip
+
+      routes_namespace = if config.namespace
+        # Wrap Routes in the same namespace as models
+        <<~TSP
+          namespace #{config.namespace} {
+            namespace Routes {
+              #{resources}
+            }
+          }
+        TSP
+      else
+        <<~TSP
+          namespace Routes {
+            #{resources}
+          }
+        TSP
+      end
+
       <<~TSP
         //
         // DO NOT MODIFY: This file was automatically generated by TypeSpecFromSerializers.
         import "@typespec/http";
-        
+
         #{imports}
         using TypeSpec.Http;
 
-        namespace Routes {
-          #{resources}
-        }
+        #{routes_namespace.strip}
       TSP
     end
 
@@ -501,7 +606,17 @@ module TypeSpecFromSerializers
 
         # Remove the serializer suffix from the class name.
         name_from_serializer: ->(name) {
-          name.split("::").map { |n| n.delete_suffix("Serializer") }.join("::")
+          transformed = name.split("::").map { |n| n.delete_suffix("Serializer") }.join("::")
+          # Check for TypeSpec language keyword conflicts (always problematic)
+          final_name = transformed.split("::").map do |part|
+            if TYPESPEC_LANGUAGE_KEYWORDS.include?(part)
+              warn "Warning: TypeSpec model name '#{part}' conflicts with reserved keyword. Renaming to '#{part}_'"
+              "#{part}_"
+            else
+              part
+            end
+          end.join("::")
+          final_name
         },
 
         # Types that don't need to be imported in TypeSpec.
@@ -553,11 +668,35 @@ module TypeSpecFromSerializers
           "destroy" => "delete",
         },
 
+        # Maps Sorbet types to TypeSpec types (optional Sorbet integration)
+        sorbet_to_typespec_type_mapping: {
+          "String" => :string,
+          "Integer" => :int32,
+          "Float" => :float64,
+          "TrueClass" => :boolean,
+          "FalseClass" => :boolean,
+          "T::Boolean" => :boolean,
+          "Date" => :plainDate,
+          "DateTime" => :utcDateTime,
+          "Time" => :utcDateTime,
+          "Symbol" => :string,
+        },
+
         # Allows to transform keys, useful when converting objects client-side.
         transform_keys: nil,
 
         # Allows scoping typespec definitions to a namespace
-        namespace: nil,
+        # Default to Rails app name, or "Schema" as fallback
+        namespace: begin
+          if defined?(Rails) && Rails.application
+            Rails.application.class.module_parent_name
+          else
+            "Schema"
+          end
+        end,
+
+        # Filter routes to export (similar to js_from_routes)
+        export_if: ->(route) { route.defaults.fetch(:export, nil) },
       )
     end
 
@@ -607,7 +746,7 @@ module TypeSpecFromSerializers
       <<~TSP
         //
         // DO NOT MODIFY: This file was automatically generated by TypeSpecFromSerializers.
-        #{model.used_imports.empty? ? "export {}\n" : model.used_imports.join}
+        #{model.used_imports.join unless model.used_imports.empty?}
         namespace #{config.namespace} {
           #{model.as_typespec}
         }
