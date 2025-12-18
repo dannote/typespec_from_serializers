@@ -24,12 +24,38 @@ module TypeSpecFromSerializers
         super(name)
       end
 
-      # Public: Shortcut for typing a serializer attribute.
+      # Public: Declare type for an attribute or method return value.
       #
-      # It specifies the type for a serializer method that will be defined
-      # immediately after calling this method.
+      # type    - Symbol for attribute type, or Class/Sorbet type for method return
+      # options - Additional options passed to `attribute` when type is a Symbol
+      #
+      # Examples
+      #
+      #   type :string           # Attribute type
+      #   type String            # Method return type
+      #   type T.nilable(String) # Sorbet type
+      #
       def type(type, **options)
-        attribute type: type, **options
+        type.is_a?(Symbol) ? attribute(type: type, **options) : @_pending_return_type = type
+      end
+
+      # Internal: Captures pending type declaration when method is defined.
+      def method_added(method_name)
+        super
+        if (pending_type = @_pending_return_type)
+          return_type_registry[method_name] = pending_type
+          @_pending_return_type = nil
+        end
+      end
+
+      # Internal: Registry storing method return type declarations.
+      def return_type_registry
+        @return_type_registry ||= {}
+      end
+
+      # Public: Retrieve declared return type for a method.
+      def type_for_method(method_name)
+        return_type_registry[method_name.to_sym]
       end
 
     private

@@ -460,7 +460,7 @@ module TypeSpecFromSerializers
     #
     # Returns Pathname
     def root
-      defined?(Rails) ? Rails.root : Pathname.new(Dir.pwd)
+      (defined?(Rails) && Rails.root) || Pathname.new(Dir.pwd)
     end
 
     # Public: Returns the RBI base directory path.

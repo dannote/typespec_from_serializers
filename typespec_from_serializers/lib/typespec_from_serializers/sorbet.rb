@@ -75,13 +75,46 @@ module TypeSpecFromSerializers
     #   # => { typespec_type: :string, nilable: false, array: false }
     #
     def extract_type_for(klass, method_name)
-      # Try runtime reflection first (fastest), fall back to RBI files
-      (available? ? extract_from_runtime(klass, method_name) : nil) ||
+      # Try TypeDSL first (if available), then runtime reflection, then RBI files
+      extract_from_type_dsl(klass, method_name) ||
+        (available? ? extract_from_runtime(klass, method_name) : nil) ||
         (rbi_available? ? extract_from_rbi(klass, method_name) : nil)
     end
 
     class << self
     private
+
+      # Internal: Extract type from TypeDSL declaration.
+      def extract_from_type_dsl(klass, method_name)
+        return nil unless klass.respond_to?(:type_for_method)
+
+        type_annotation = klass.type_for_method(method_name)
+        return nil unless type_annotation
+
+        # Handle plain Ruby classes
+        if type_annotation.is_a?(Class)
+          type_name = type_annotation.name
+          mapped_type = config_type_mapping[type_name]
+          result = {
+            typespec_type: mapped_type || type_name,
+            nilable: false,
+            array: false,
+            type_class: type_annotation,
+          }
+          return result
+        end
+
+        # Handle Sorbet type annotations
+        sorbet_type_to_typespec(type_annotation)
+      rescue
+        # Type extraction failed
+        nil
+      end
+
+      # Internal: Get type mapping from config.
+      def config_type_mapping
+        TypeSpecFromSerializers.config.sorbet_to_typespec_type_mapping
+      end
 
       # Internal: Extract type from runtime reflection.
       def extract_from_runtime(klass, method_name)
