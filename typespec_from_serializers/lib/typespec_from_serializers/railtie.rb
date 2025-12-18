@@ -43,6 +43,20 @@ class TypeSpecFromSerializers::Railtie < Rails::Railtie
         puts "Found #{serializers.size} serializers:"
         puts serializers.map { |s| "\t#{s.name}" }.join("\n")
       end
+
+      desc "Generates Sorbet RBI files for serializers"
+      task generate_rbi: :environment do
+        require_relative "generator"
+        require_relative "rbi"
+        start_time = Time.zone.now
+        print "Generating Sorbet RBI files for serializers..."
+        # Load serializers first
+        TypeSpecFromSerializers.generate(force: true)
+        files = TypeSpecFromSerializers::RBI.generate_for_all_serializers
+        puts "completed in #{(Time.zone.now - start_time).round(2)} seconds.\n"
+        puts "Generated #{files.size} RBI files:"
+        puts files.map { |f| "\t#{f}" }.join("\n")
+      end
     end
   end
 end

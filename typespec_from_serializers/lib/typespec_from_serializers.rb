@@ -2,5 +2,6 @@
 
 require_relative "typespec_from_serializers/version"
 require_relative "typespec_from_serializers/dsl"
-require_relative "typespec_from_serializers/sorbet_type_extractor"
+require_relative "typespec_from_serializers/sorbet"
+require_relative "typespec_from_serializers/rbi"
 require_relative "typespec_from_serializers/railtie"

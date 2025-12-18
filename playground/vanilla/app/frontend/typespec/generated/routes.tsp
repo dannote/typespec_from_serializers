@@ -4,8 +4,10 @@
 import "@typespec/http";
 
 import "./models/Composer.tsp";
+import "./models/ComposerWithSongs.tsp";
 import "./models/Song.tsp";
-import "./models/Video.tsp";
+import "./models/SongWithVideos.tsp";
+import "./models/VideoWithSong.tsp";
 
 using TypeSpec.Http;
 
@@ -14,19 +16,19 @@ namespace SampleApp {
     @route("/composers")
   interface Composers {
     @get list(): Composer[];
-    @get read(@path id: string): Composer;
+    @get read(@path id: string): ComposerWithSongs;
   }
 
   @route("/songs")
   interface Songs {
     @get list(): Song[];
-    @get read(@path id: string): Song;
+    @get read(@path id: string): SongWithVideos;
   }
 
   @route("/videos")
   interface Videos {
-    @get list(): Video[];
-    @get read(@path id: string): Video;
+    @get list(): VideoWithSong[];
+    @get read(@path id: string): VideoWithSong;
   }
   }
 }

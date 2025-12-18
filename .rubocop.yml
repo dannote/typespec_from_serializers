@@ -38,6 +38,9 @@ RSpec/DescribedClass:
   Enabled: false
 RSpec/Capybara/FeatureMethods:
   Enabled: false
+RSpec/FilePath:
+  CustomTransform:
+    TypeSpecFromSerializers: typespec_from_serializers
 
 # Trailing Commas
 Style/TrailingCommaInArrayLiteral:

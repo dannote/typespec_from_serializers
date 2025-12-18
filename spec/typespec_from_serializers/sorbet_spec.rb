@@ -1,7 +1,7 @@
 require "spec_helper"
 
-describe TypeSpecFromSerializers::SorbetTypeExtractor do
-  let(:extractor) { TypeSpecFromSerializers::SorbetTypeExtractor }
+describe TypeSpecFromSerializers::Sorbet do
+  let(:extractor) { TypeSpecFromSerializers::Sorbet }
 
   describe ".available?" do
     context "when sorbet-runtime is loaded" do
@@ -47,14 +47,30 @@ describe TypeSpecFromSerializers::SorbetTypeExtractor do
   describe ".rbi_available?" do
     context "when sorbet/rbi directory doesn't exist" do
       it "returns false" do
-        # In this test environment, sorbet/rbi likely doesn't exist
-        expect(extractor.rbi_available?).to be false
+        # Check if the directory actually doesn't exist
+        path = if defined?(Rails) && Rails.respond_to?(:root) && Rails.root
+          Rails.root.join("sorbet/rbi")
+        else
+          Pathname.new("sorbet/rbi")
+        end
+
+        if path.exist? && path.directory?
+          skip "sorbet/rbi directory exists in test environment"
+        else
+          expect(extractor.rbi_available?).to be false
+        end
       end
     end
 
     context "when sorbet/rbi directory exists" do
       it "returns true" do
-        skip "sorbet/rbi directory not present" unless File.directory?("sorbet/rbi")
+        path = if defined?(Rails) && Rails.respond_to?(:root) && Rails.root
+          Rails.root.join("sorbet/rbi")
+        else
+          Pathname.new("sorbet/rbi")
+        end
+
+        skip "sorbet/rbi directory not present" unless path.exist? && path.directory?
 
         expect(extractor.rbi_available?).to be true
       end

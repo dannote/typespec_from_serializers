@@ -135,7 +135,7 @@ describe "Generator" do
         type: :string,
         optional: false,
         multi: false,
-        column_name: "model"
+        column_name: "model",
       )
 
       expect(property.as_typespec).to eq("`model`: string;")
@@ -147,7 +147,7 @@ describe "Generator" do
         type: :int32,
         optional: false,
         multi: false,
-        column_name: "scalar"
+        column_name: "scalar",
       )
 
       expect(property.as_typespec).to eq("`scalar`: int32;")
@@ -159,7 +159,7 @@ describe "Generator" do
         type: :int32,
         optional: true,
         multi: false,
-        column_name: "user_id"
+        column_name: "user_id",
       )
 
       expect(property.as_typespec).to eq("userId?: int32;")
@@ -172,10 +172,174 @@ describe "Generator" do
           type: :string,
           optional: false,
           multi: false,
-          column_name: keyword
+          column_name: keyword,
         )
 
         expect(property.as_typespec).to eq("`#{keyword}`: string;")
+      end
+    end
+  end
+
+  describe "controller type inference" do
+    let(:test_controller_class) {
+      Class.new(ApplicationController) do
+        extend T::Sig
+
+        def self.name
+          "TestController"
+        end
+
+        def explicit_serializer
+          render json: User.all, serializer: ComposerSerializer
+        end
+
+        def serializer_one
+          ComposerWithSongsSerializer.one(Composer.first)
+        end
+
+        def serializer_many
+          SongSerializer.many(Song.all)
+        end
+
+        sig { returns(T::Array[Composer]) }
+        def sorbet_typed_array
+          Composer.all
+        end
+
+        sig { returns(Song) }
+        def sorbet_typed_model
+          Song.first
+        end
+
+        def no_serializer
+          render json: {data: "test"}
+        end
+      end
+    }
+
+    describe "#extract_serializer_from_controller_method" do
+      it "extracts serializer from render with serializer option" do
+        result = TypeSpecFromSerializers.send(
+          :extract_serializer_from_controller_method,
+          test_controller_class,
+          :explicit_serializer,
+        )
+        expect(result).to eq(ComposerSerializer)
+      end
+
+      it "extracts serializer from Serializer.one() call" do
+        result = TypeSpecFromSerializers.send(
+          :extract_serializer_from_controller_method,
+          test_controller_class,
+          :serializer_one,
+        )
+        expect(result).to eq(ComposerWithSongsSerializer)
+      end
+
+      it "extracts serializer from Serializer.many() call" do
+        result = TypeSpecFromSerializers.send(
+          :extract_serializer_from_controller_method,
+          test_controller_class,
+          :serializer_many,
+        )
+        expect(result).to eq(SongSerializer)
+      end
+
+      it "returns nil when no serializer found" do
+        result = TypeSpecFromSerializers.send(
+          :extract_serializer_from_controller_method,
+          test_controller_class,
+          :no_serializer,
+        )
+        expect(result).to be_nil
+      end
+    end
+
+    describe "#infer_response_type integration" do
+      before do
+        stub_const("TestController", test_controller_class)
+      end
+
+      it "prioritizes explicit serializer over Sorbet" do
+        # Even though the method has no Sorbet sig, explicit serializer wins
+        result = TypeSpecFromSerializers.send(
+          :infer_response_type,
+          "test",
+          :explicit_serializer,
+        )
+        expect(result).to eq("Composer")
+      end
+
+      it "uses Sorbet when no explicit serializer found" do
+        result = TypeSpecFromSerializers.send(
+          :infer_response_type,
+          "test",
+          :sorbet_typed_model,
+        )
+        expect(result).to eq("Song")
+      end
+
+      it "infers array types from Sorbet signatures" do
+        result = TypeSpecFromSerializers.send(
+          :infer_response_type,
+          "test",
+          :sorbet_typed_array,
+        )
+        expect(result).to eq("Composer")
+      end
+    end
+
+    describe "#infer_type_from_controller_sorbet" do
+      let(:sorbet_controller_class) {
+        Class.new(ApplicationController) do
+          extend T::Sig
+
+          def self.name
+            "SorbetTestController"
+          end
+
+          sig { returns(Composer) }
+          def returns_model
+            Composer.first
+          end
+
+          sig { returns(T::Array[Song]) }
+          def returns_array
+            Song.all
+          end
+
+          sig { returns(ComposerSerializer) }
+          def returns_serializer
+            ComposerSerializer.one(Composer.first)
+          end
+        end
+      }
+
+      it "infers type from ActiveRecord model Sorbet signature" do
+        result = TypeSpecFromSerializers.send(
+          :infer_type_from_controller_sorbet,
+          sorbet_controller_class,
+          :returns_model,
+        )
+        expect(result).to eq("Composer")
+      end
+
+      it "infers type from array of ActiveRecord models" do
+        result = TypeSpecFromSerializers.send(
+          :infer_type_from_controller_sorbet,
+          sorbet_controller_class,
+          :returns_array,
+        )
+        expect(result).to eq("Song")
+      end
+
+      it "infers type from serializer class Sorbet signature" do
+        result = TypeSpecFromSerializers.send(
+          :infer_type_from_controller_sorbet,
+          sorbet_controller_class,
+          :returns_serializer,
+        )
+        expect(result).to eq("Composer")
       end
     end
   end
@@ -201,7 +365,7 @@ describe "Generator" do
       load Rails.root.join("config/routes.rb")
     end
 
-    context "export flag filtering" do
+    context "with export flag filtering" do
       it "only includes routes with export: true" do
         content = routes_file.read
 
@@ -242,7 +406,7 @@ describe "Generator" do
       end
     end
 
-    context "HTTP verb handling" do
+    context "with HTTP verb handling" do
       it "generates correct HTTP method decorators" do
         content = routes_file.read
 
@@ -253,53 +417,50 @@ describe "Generator" do
 
       it "prefers PATCH over PUT for update actions" do
         # Create a temporary route with both PUT and PATCH
-        begin
-          Rails.application.routes.draw do
-            defaults export: true do
-              resources :composers, only: %i[index show update]
-            end
+
+        Rails.application.routes.draw do
+          defaults export: true do
+            resources :composers, only: %i[index show update]
           end
-
-          output_dir.rmtree if output_dir.exist?
-          TypeSpecFromSerializers.generate
-
-          content = routes_file.read
-
-          # Should have PATCH for update
-          expect(content).to include("@patch")
-          # Should NOT have duplicate PUT for the same update action
-          # (Rails generates both PUT and PATCH, but we filter out PUT)
-          put_count = content.scan(/@put\s+update/).size
-          expect(put_count).to eq(0)
-        ensure
-          # Reload original routes
-          Rails.application.routes.clear!
-          load Rails.root.join("config/routes.rb")
         end
+
+        output_dir.rmtree if output_dir.exist?
+        TypeSpecFromSerializers.generate
+
+        content = routes_file.read
+
+        # Should have PATCH for update
+        expect(content).to include("@patch")
+        # Should NOT have duplicate PUT for the same update action
+        # (Rails generates both PUT and PATCH, but we filter out PUT)
+        put_count = content.scan(/@put\s+update/).size
+        expect(put_count).to eq(0)
+      ensure
+        # Reload original routes
+        Rails.application.routes.clear!
+        load Rails.root.join("config/routes.rb")
       end
     end
 
-    context "route namespace support" do
+    context "with route namespace support" do
       it "extracts namespace from export config" do
         # The namespace_for_route method should handle both:
         # - export: { namespace: "custom" }
         # - export: true (falls back to controller name)
 
         result = TypeSpecFromSerializers.send(:namespace_for_route,
-          OpenStruct.new(defaults: { export: { namespace: "custom_ns" }, controller: "videos" })
-        )
+          OpenStruct.new(defaults: {export: {namespace: "custom_ns"}, controller: "videos"}))
         expect(result).to eq("custom_ns")
       end
 
       it "falls back to controller name when no namespace in export config" do
         result = TypeSpecFromSerializers.send(:namespace_for_route,
-          OpenStruct.new(defaults: { export: true, controller: "videos" })
-        )
+          OpenStruct.new(defaults: {export: true, controller: "videos"}))
         expect(result).to eq("videos")
       end
     end
 
-    context "route uniqueness" do
+    context "with route uniqueness" do
       it "allows multiple routes with same action but different paths" do
         # This would be the case for nested routes or custom paths
         # The routes should be deduplicated by method + action + path
@@ -313,7 +474,7 @@ describe "Generator" do
       end
     end
 
-    context "path parameter extraction" do
+    context "with path parameter extraction" do
       it "extracts path parameters correctly" do
         content = routes_file.read
 
@@ -336,7 +497,7 @@ describe "Generator" do
       end
     end
 
-    context "response type inference" do
+    context "with response type inference" do
       it "infers response types from serializers" do
         content = routes_file.read
 
@@ -355,7 +516,7 @@ describe "Generator" do
     end
   end
 
-  context "TypeSpec compilation" do
+  context "when compiling TypeSpec" do
     before do
       # Clean and regenerate with default config (no namespace) to ensure valid TypeSpec
       output_dir.rmtree if output_dir.exist?

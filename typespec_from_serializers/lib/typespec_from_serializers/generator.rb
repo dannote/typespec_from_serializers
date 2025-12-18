@@ -154,7 +154,7 @@ module TypeSpecFromSerializers
         .map { |type| [type.name, relative_path(type.pathname, pathname)] }
 
       custom_type_imports = attribute_types
-        .flat_map { |type| extract_typespec_types(type.to_s) }
+        .flat_map { |type| type.to_s.split(".").first }
         .uniq
         .reject { |type| global_type?(type) }
         .map { |type|
@@ -185,11 +185,6 @@ module TypeSpecFromSerializers
     def relative_path(target_path, importer_path)
       path = target_path.relative_path_from(importer_path.parent).to_s
       path.start_with?(".") ? path : "./#{path}"
-    end
-
-    # Internal: Extracts any types inside generics or array types.
-    def extract_typespec_types(type)
-      type.split(".").first
     end
 
     # NOTE: Treat uppercase names as custom types.
@@ -223,8 +218,8 @@ module TypeSpecFromSerializers
       end
 
       # Priority 2: Sorbet method signature on serializer (if available)
-      if serializer_class && SorbetTypeExtractor.available?
-        sorbet_info = SorbetTypeExtractor.extract_type_for(serializer_class, column_name)
+      if serializer_class && Sorbet.available?
+        sorbet_info = Sorbet.extract_type_for(serializer_class, column_name)
         if sorbet_info
           self.type = sorbet_info[:typespec_type]
           self.optional = true if sorbet_info[:nilable]
@@ -234,8 +229,8 @@ module TypeSpecFromSerializers
       end
 
       # Priority 2b: Sorbet method signature on model (if available)
-      if model_class && SorbetTypeExtractor.available?
-        sorbet_info = SorbetTypeExtractor.extract_type_for(model_class, column_name)
+      if model_class && Sorbet.available?
+        sorbet_info = Sorbet.extract_type_for(model_class, column_name)
         if sorbet_info
           self.type = sorbet_info[:typespec_type]
           self.optional = true if sorbet_info[:nilable]
@@ -277,12 +272,12 @@ module TypeSpecFromSerializers
       "#{escaped_name}#{"?" if optional}: #{type_str}#{"[]" if multi};"
     end
 
-    private
+  private
 
     def escape_field_name(field_name)
       # Escape field names that conflict with TypeSpec keywords using backticks
       all_keywords = TYPESPEC_LANGUAGE_KEYWORDS +
-                     TYPESPEC_REFLECTION_TYPES.map(&:downcase)
+        TYPESPEC_REFLECTION_TYPES.map(&:downcase)
 
       if all_keywords.include?(field_name)
         "`#{field_name}`"
@@ -325,7 +320,7 @@ module TypeSpecFromSerializers
     def params_typespec
       params = []
       params += path_params.map { |param| "@path #{param}: string" } if path_params.any?
-      params << "@body body: #{response_type.gsub("::", "")}" if %w[POST PUT PATCH].include?(method)
+      params << "@body body: #{response_type.gsub("::", "")}" if method.in?(%w[POST PUT PATCH])
       params.join(", ")
     end
   end
@@ -397,9 +392,12 @@ module TypeSpecFromSerializers
 
       generate_routes
 
-      loaded_serializers.each do |serializer|
+      serializers = loaded_serializers
+      serializers.each do |serializer|
         generate_model_for(serializer)
       end
+
+      serializers
     end
 
     def generate_changed
@@ -451,11 +449,28 @@ module TypeSpecFromSerializers
       changes
     end
 
-  private
+    # Public: Returns all loaded serializers.
+    #
+    # Returns Array of serializer classes.
+    def serializers
+      loaded_serializers
+    end
 
+    # Public: Returns the application root path.
+    #
+    # Returns Pathname
     def root
       defined?(Rails) ? Rails.root : Pathname.new(Dir.pwd)
     end
+
+    # Public: Returns the RBI base directory path.
+    #
+    # Returns Pathname
+    def rbi_dir
+      root.join("sorbet/rbi")
+    end
+
+  private
 
     def changes
       @changes ||= Changes.new(config.serializers_dirs)
@@ -473,6 +488,7 @@ module TypeSpecFromSerializers
       config.base_serializers.map(&:constantize)
         .flat_map(&:descendants)
         .uniq
+        .reject { |s| s.name.nil? } # Filter out anonymous classes
         .sort_by(&:name)
         .reject { |s| skip_serializer?(s) }
     rescue NameError
@@ -548,9 +564,163 @@ module TypeSpecFromSerializers
       controller_class = "#{controller.camelize}Controller".safe_constantize
       return nil unless controller_class
 
+      # Try to infer from explicit serializer usage in controller method
+      if (serializer_from_method = extract_serializer_from_controller_method(controller_class, action))
+        return serializer_from_method.tsp_name
+      end
+
+      # Try to infer from Sorbet signature on controller method
+      if Sorbet.available?
+        if (sorbet_type = infer_type_from_controller_sorbet(controller_class, action))
+          return sorbet_type
+        end
+      end
+
+      # Fall back to convention-based inference (controller name → serializer using name_from_serializer)
       model_name = controller.singularize.camelize
-      serializer_class = "#{model_name}Serializer".safe_constantize
-      serializer_class&.tsp_name
+      loaded_serializers.find { |s| config.name_from_serializer.call(s.name) == model_name }&.tsp_name
+    end
+
+    # Internal: Extracts serializer class from controller method source using Prism AST
+    def extract_serializer_from_controller_method(controller_class, action)
+      return nil unless controller_class.method_defined?(action)
+
+      method = controller_class.instance_method(action)
+      source_location = method.source_location
+      return nil unless source_location
+
+      file_path, line_number = source_location
+      return nil unless File.exist?(file_path)
+
+      # Parse the file with Prism
+      result = Prism.parse_file(file_path)
+      return nil unless result.success?
+
+      # Find the specific method definition node
+      method_finder = MethodFinder.new(action.to_s, line_number)
+      method_finder.visit(result.value)
+      return nil unless method_finder.method_node
+
+      # Find serializer references only within this method
+      visitor = SerializerVisitor.new
+      visitor.visit(method_finder.method_node)
+
+      # Try to constantize any found serializers and return the first valid one
+      visitor.serializer_names.filter_map(&:safe_constantize).first
+    rescue
+      # File read or parsing error - return nil
+      nil
+    end
+
+    # Internal: Prism visitor to find a specific method definition by name and line
+    class MethodFinder < Prism::Visitor
+      attr_reader :method_node
+
+      def initialize(method_name, line_number)
+        super()
+        @method_name = method_name
+        @line_number = line_number
+        @method_node = nil
+      end
+
+      def visit_def_node(node)
+        # Match by method name and line number proximity
+        if node.name.to_s == @method_name &&
+            node.location.start_line <= @line_number &&
+            node.location.end_line >= @line_number
+          @method_node = node
+        end
+        super
+      end
+    end
+
+    # Internal: Prism visitor to extract serializer class names from AST
+    class SerializerVisitor < Prism::Visitor
+      attr_reader :serializer_names
+
+      def initialize
+        super
+        @serializer_names = []
+      end
+
+      # Visit call nodes to find serializer usage patterns
+      def visit_call_node(node)
+        # Pattern 1: render(..., serializer: FooSerializer)
+        if node.name.to_s.in?(%w[render render_page])
+          extract_serializer_from_render(node)
+        end
+
+        # Pattern 2: FooSerializer.one(...) or FooSerializer.many(...)
+        if node.name.to_s.in?(%w[one many]) && node.receiver
+          extract_serializer_from_class_method(node)
+        end
+
+        super
+      end
+
+    private
+
+      # Extract serializer from render call keyword arguments
+      def extract_serializer_from_render(node)
+        return unless node.arguments&.arguments
+
+        node.arguments.arguments
+          .select { |arg| arg.is_a?(Prism::KeywordHashNode) }
+          .flat_map(&:elements)
+          .select do |el|
+            el.is_a?(Prism::AssocNode) &&
+              el.key.is_a?(Prism::SymbolNode) &&
+              el.key.unescaped == "serializer"
+          end
+          .each do |element|
+            @serializer_names << extract_constant_name(element.value) if constant_node?(element.value)
+          end
+      end
+
+      # Extract serializer from SomeSerializer.one/many calls
+      def extract_serializer_from_class_method(node)
+        return unless constant_node?(node.receiver)
+
+        # Collect any constant called with .one/.many - let constantization filter valid serializers
+        extract_constant_name(node.receiver).then { |name| @serializer_names << name if name.present? }
+      end
+
+      # Check if node is a constant reference
+      def constant_node?(node)
+        node.is_a?(Prism::ConstantReadNode) || node.is_a?(Prism::ConstantPathNode)
+      end
+
+      # Extract constant name from ConstantReadNode or ConstantPathNode
+      def extract_constant_name(node)
+        case node
+        when Prism::ConstantReadNode
+          node.name.to_s
+        when Prism::ConstantPathNode
+          node.full_name
+        else
+          ""
+        end
+      end
+    end
+
+    # Internal: Infers TypeSpec type from Sorbet signature on controller method
+    def infer_type_from_controller_sorbet(controller_class, action)
+      return nil unless controller_class.method_defined?(action)
+
+      sorbet_info = Sorbet.extract_type_for(controller_class, action)
+      type_class = sorbet_info&.dig(:type_class)
+      return nil unless type_class
+
+      # If it's already a serializer, use it directly
+      return type_class.tsp_name if type_class.respond_to?(:tsp_name)
+
+      # If it's an ActiveRecord model, search for corresponding serializer using name_from_serializer
+      if type_class.is_a?(Class) && type_class.ancestors.map(&:name).include?("ActiveRecord::Base")
+        loaded_serializers.find { |s| config.name_from_serializer.call(s.name) == type_class.name }&.tsp_name
+      end
+    rescue
+      # Type introspection or constantization error - return nil
+      nil
     end
 
     # Internal: Generates the routes.tsp content with resources
@@ -687,13 +857,7 @@ module TypeSpecFromSerializers
 
         # Allows scoping typespec definitions to a namespace
         # Default to Rails app name, or "Schema" as fallback
-        namespace: begin
-          if defined?(Rails) && Rails.application
-            Rails.application.class.module_parent_name
-          else
-            "Schema"
-          end
-        end,
+        namespace: (defined?(Rails) && Rails.application) ? Rails.application.class.module_parent_name : "Schema",
 
         # Filter routes to export (similar to js_from_routes)
         export_if: ->(route) { route.defaults.fetch(:export, nil) },

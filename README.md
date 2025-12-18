@@ -379,29 +379,34 @@ In addition to generating TypeSpec models from serializers, `TypeSpecFromSeriali
 `routes.tsp` file based on your Rails application's routes. This feature creates TypeSpec interfaces
 for your API endpoints, mapping Rails controllers and actions to HTTP operations.
 
-For example, given Rails routes like:
+Response types are inferred from:
+1. Explicit serializer usage in controller methods
+2. Sorbet type signatures (runtime or RBI files)
+3. Controller naming convention (e.g., `videos#show` → `VideoSerializer`)
+
+For example:
 
 ```ruby
-Rails.application.routes.draw do
-  resources :videos, only: [:index, :show]
+# config/routes.rb
+resources :videos, only: [:index, :show]
+
+# app/controllers/videos_controller.rb
+class VideosController < ApplicationController
+  def show
+    VideoWithCommentsSerializer.one(Video.find(params[:id]))
+  end
 end
 ```
 
-The generator produces a `routes.tsp` file like:
+Generates:
 
 ```typespec
-import "@typespec/http";
-
-import "./models/Video.tsp";
-
-using TypeSpec.Http;
-
 namespace SampleApp {
   namespace Routes {
     @route("/videos")
     interface Videos {
       @get list(): Video[];
-      @get read(@path id: string): Video;
+      @get read(@path id: string): VideoWithComments;  // inferred from serializer
     }
   }
 }
