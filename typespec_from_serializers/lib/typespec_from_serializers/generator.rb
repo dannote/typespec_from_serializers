@@ -119,6 +119,7 @@ module TypeSpecFromSerializers
     :output_dir,
     :custom_typespec_dir,
     :name_from_serializer,
+    :controller_suffix,
     :param_method_suffix,
     :global_types,
     :sort_properties_by,
@@ -550,14 +551,14 @@ module TypeSpecFromSerializers
     def generate_routes
       return [] unless defined?(Rails) && Rails.application
 
-      routes = collect_rails_routes
+      routes, controllers = collect_rails_routes
       cache_key = routes.map { |r| r.operations.map { |op| "#{op.method}#{r.path}#{op.action}" }.join }.join
       write_if_changed(filename: "routes", cache_key: cache_key) {
         routes_content(routes)
       }
 
-      # Return list of controllers with routes
-      routes.map(&:name).sort
+      # Return list of controller class names
+      controllers.sort
     end
 
     # Internal: Checks if it should avoid generating an model.
@@ -626,8 +627,9 @@ module TypeSpecFromSerializers
     end
 
     # Internal: Collects routes from Rails and groups them into resources
+    # Returns [routes_array, controller_class_names_array]
     def collect_rails_routes
-      return [] unless defined?(Rails) && Rails.application
+      return [[], []] unless defined?(Rails) && Rails.application
 
       routes_by_controller = Rails.application.routes.routes.each_with_object(Hash.new { |h, k| h[k] = [] }) do |route, hash|
         # Filter routes based on export_if configuration (similar to js_from_routes)
@@ -664,11 +666,16 @@ module TypeSpecFromSerializers
         }
       end
 
-      routes_by_controller.flat_map do |controller, routes|
+      # Extract controller class names for reporting
+      controller_class_names = routes_by_controller.keys.map { |c| "#{c.camelize}#{config.controller_suffix}" }.uniq
+
+      routes = routes_by_controller.flat_map do |controller, routes|
         # Group routes by parent namespace (for nested resources)
         routes.group_by { |route| extract_parent_namespace(route[:path]) }
           .map { |parent_ns, ns_routes| build_resource(controller, ns_routes, parent_ns) }
       end
+
+      [routes, controller_class_names]
     end
 
     # Internal: Builds a Resource from routes for a specific controller and namespace
@@ -708,7 +715,7 @@ module TypeSpecFromSerializers
         .transform_keys(&:to_s)
         .transform_values { |v| map_type_class_to_typespec(v) }
 
-      controller_class = "#{controller.camelize}Controller".safe_constantize
+      controller_class = "#{controller.camelize}#{config.controller_suffix}".safe_constantize
       controller_param_types = controller_class&.then { |klass|
         extract_param_types_from_controller(klass, route[:action])
       } || {}
@@ -812,7 +819,7 @@ module TypeSpecFromSerializers
 
     # Internal: Infers the response type based on controller and action
     def infer_response_type(controller, action)
-      controller_class = "#{controller.camelize}Controller".safe_constantize
+      controller_class = "#{controller.camelize}#{config.controller_suffix}".safe_constantize
       return nil unless controller_class
 
       # Try to infer from explicit serializer usage in controller method
@@ -1173,6 +1180,9 @@ module TypeSpecFromSerializers
           end.join("::")
           final_name
         },
+
+        # Controller suffix for route generation reporting
+        controller_suffix: "Controller",
 
         # Types that don't need to be imported in TypeSpec.
         global_types: [
