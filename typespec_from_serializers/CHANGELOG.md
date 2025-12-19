@@ -1,6 +1,6 @@
 # TypeSpec From Serializers Changelog
 
-## [0.1.1] - 2024-12-19
+## [0.2.0] - 2025-12-19
 
 Initial release - fork of `types_from_serializers` adapted to generate TypeSpec instead of TypeScript.
 
