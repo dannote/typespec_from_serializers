@@ -382,6 +382,28 @@ require "typespec_from_serializers/generator"
 TypeSpecFromSerializers.generate(force: true)
 ```
 
+### OpenAPI Generation 📄
+
+`TypeSpecFromSerializers` can compile your generated TypeSpec files to OpenAPI 3.0 specifications, enabling integration with API documentation tools, client generators, and testing frameworks.
+
+#### Setup
+
+First, install the required TypeSpec dependencies:
+
+```bash
+bundle exec rake typespec_from_serializers:setup
+```
+
+#### Compiling to OpenAPI
+
+Generate an OpenAPI specification from your TypeSpec files:
+
+```bash
+bundle exec rake typespec_from_serializers:compile_openapi
+```
+
+The generated OpenAPI spec will be available in your `typespec/` directory and can be used with tools like Swagger UI, Redoc, or API client generators.
+
 ### With [`vite-plugin-full-reload`][vite-plugin-full-reload] ⚡️
 
 When using _[Vite Ruby]_, you can add [`vite-plugin-full-reload`][vite-plugin-full-reload]
@@ -691,6 +713,19 @@ config.action_to_operation_mapping = {
 ```
 
 This generates operations like `@get list()` instead of `@get index()`.
+
+### `openapi_path`
+
+_Default:_ `"public/openapi.yaml"`
+
+Specifies where the compiled OpenAPI specification file should be placed.
+
+```ruby
+# Place in a custom location
+config.openapi_path = Rails.root.join("docs", "api.yaml")
+```
+
+The default location in `public/` makes the OpenAPI spec accessible via HTTP for tools like Swagger UI.
 
 ## Contact ✉️
 

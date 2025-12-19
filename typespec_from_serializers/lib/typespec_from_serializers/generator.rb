@@ -125,6 +125,9 @@ module TypeSpecFromSerializers
     :namespace,
     :export_if,
     :route_param_types,
+    :package_manager,
+    :openapi_path,
+    :root,
     keyword_init: true,
   ) do
     def relative_custom_typespec_dir
@@ -426,7 +429,7 @@ module TypeSpecFromSerializers
     # Public: Generates code for all serializers in the app.
     def generate(force: ENV["SERIALIZER_TYPESPEC_FORCE"])
       @force_generation = force
-      config.output_dir.rmtree if force && config.output_dir.exist?
+      clean_output_dir if force && config.output_dir.exist?
 
       if config.namespace
         load_serializers(all_serializer_files) if force
@@ -536,6 +539,11 @@ module TypeSpecFromSerializers
     end
 
   private
+
+    # Internal: Cleans the output directory.
+    def clean_output_dir
+      config.output_dir.rmtree if config.output_dir.exist?
+    end
 
     def changes
       @changes ||= Changes.new(config.serializers_dirs)
@@ -1089,7 +1097,23 @@ module TypeSpecFromSerializers
 
         # Suffix for param methods to extract types from (e.g., video_params)
         param_method_suffix: "_params",
+
+        # Package manager to use for TypeSpec compilation (npm, pnpm, bun, yarn)
+        package_manager: detect_package_manager(root),
+
+        # Path where the compiled OpenAPI spec should be placed
+        openapi_path: root.join("public", "openapi.yaml"),
+
+        # Project root directory
+        root: root,
       )
+    end
+
+    def detect_package_manager(root)
+      return "pnpm" if root.join("pnpm-lock.yaml").exist?
+      return "yarn" if root.join("yarn.lock").exist?
+      return "bun" if root.join("bun.lockb").exist?
+      "npm" # default fallback
     end
 
     # Internal: Writes if the file does not exist or the cache key has changed.
