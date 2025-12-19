@@ -132,6 +132,7 @@ module TypeSpecFromSerializers
     :route_param_types,
     :package_manager,
     :openapi_path,
+    :max_line_length,
     :root,
     keyword_init: true,
   ) do
@@ -331,13 +332,28 @@ module TypeSpecFromSerializers
   end
 
   # Internal: Represents a TypeSpec resource interface
-  Resource = Struct.new(:name, :path, :operations, keyword_init: true) do
+  Resource = Struct.new(:name, :path, :operations, :parent_namespace, keyword_init: true) do
     def as_typespec
       operations_str = operations.map { |op| "  #{op.as_typespec(resource_path: path)}" }.join("\n")
-      <<~TSP
+
+      interface_block = <<~TSP.strip
         @route("#{path}")
         interface #{name} {
         #{operations_str}
+        }
+      TSP
+
+      # Wrap in namespace if this is a nested resource
+      parent_namespace ? wrap_in_namespace(interface_block) : interface_block
+    end
+
+    private
+
+    def wrap_in_namespace(content)
+      indented_content = content.lines.map { |line| "  #{line}" }.join.rstrip
+      <<~TSP.strip
+        namespace #{parent_namespace} {
+          #{indented_content}
         }
       TSP
     end
@@ -348,17 +364,43 @@ module TypeSpecFromSerializers
     def as_typespec(resource_path: nil)
       tsp_method = method.downcase
       operation_name = TypeSpecFromSerializers.config.action_to_operation_mapping[action] || action
-      params = params_typespec
-      params_str = params.empty? ? "()" : "(#{params})"
+      route_line = build_route_decorator(resource_path)
 
-      # Add @route decorator if operation path differs from resource base path
-      route_decorator = operation_route_decorator(resource_path)
-      route_line = route_decorator ? "#{route_decorator}\n  " : ""
+      # Check if we need multiline formatting
+      single_line = build_single_line(tsp_method, operation_name)
 
-      "#{route_line}@#{tsp_method} #{operation_name}#{params_str}: #{response_type.delete(":")};"
+      too_long_for_single_line?(single_line) ?
+        multiline_format(route_line, tsp_method, operation_name) :
+        "#{route_line}#{single_line}"
     end
 
     private
+
+    def build_route_decorator(resource_path)
+      decorator = operation_route_decorator(resource_path)
+      decorator ? "#{decorator}\n  " : ""
+    end
+
+    def too_long_for_single_line?(line)
+      line.length > TypeSpecFromSerializers.config.max_line_length && all_params.any?
+    end
+
+    def all_params
+      [*format_path_params, *format_body_params]
+    end
+
+    def build_single_line(tsp_method, operation_name)
+      params = params_typespec
+      params_str = params.empty? ? "()" : "(#{params})"
+      "@#{tsp_method} #{operation_name}#{params_str}: #{response_type.delete(":")};"
+    end
+
+    def multiline_format(route_line, tsp_method, operation_name)
+      params_indented = all_params.map { |p| "\n    #{p}," }.join
+      return_type = response_type.delete(":")
+
+      "#{route_line}@#{tsp_method} #{operation_name}(#{params_indented}\n  ): #{return_type};"
+    end
 
     def operation_route_decorator(resource_path)
       return unless resource_path && path
@@ -366,20 +408,20 @@ module TypeSpecFromSerializers
       op_path_tsp = path.gsub(/:(\w+)/, '{\1}')
       standard_path = build_standard_path(resource_path)
 
-      return if op_path_tsp == standard_path
+      return if op_path_tsp == standard_path || !op_path_tsp.start_with?(resource_path)
 
-      relative_path = op_path_tsp.delete_prefix(resource_path).then do |rel|
-        rel.start_with?("/") ? rel : "/#{rel}"
-      end
+      relative_path = op_path_tsp.delete_prefix(resource_path)
+      relative_path = "/#{relative_path}" unless relative_path.start_with?("/")
 
-      %(@route("#{relative_path}")) if op_path_tsp.start_with?(resource_path)
+      %(@route("#{relative_path}"))
     end
 
     def build_standard_path(resource_path)
       return resource_path if path_params.empty?
 
       param_names = path_params.map { |p| p.is_a?(Hash) ? p[:name] : p }
-      "#{resource_path}/#{param_names.map { |p| "{#{p}}" }.join("/")}"
+      params_path = param_names.map { |p| "{#{p}}" }.join("/")
+      "#{resource_path}/#{params_path}"
     end
 
     def params_typespec
@@ -622,30 +664,42 @@ module TypeSpecFromSerializers
         }
       end
 
-      routes_by_controller.map do |controller, routes|
-        paths = routes.map { |r| r[:path] }.uniq
-        base_path = calculate_base_path(paths, controller)
-
-        operations = routes.map do |route|
-          path_param_names = route[:path].scan(/:([a-zA-Z_][a-zA-Z0-9_]*)/).flatten
-          param_types = extract_all_param_types(controller, route)
-
-          Operation.new(
-            method: route[:method],
-            action: route[:route_name] || generate_operation_name(route),
-            path: route[:path],
-            path_params: build_path_params(path_param_names, param_types),
-            body_params: build_body_params(route[:method], path_param_names, param_types),
-            response_type: infer_operation_response_type(route),
-          )
-        end
-
-        Resource.new(
-          name: controller.tr("/", "_").camelize,
-          path: base_path.start_with?("/") ? base_path : "/#{base_path}",
-          operations: operations,
-        )
+      routes_by_controller.flat_map do |controller, routes|
+        # Group routes by parent namespace (for nested resources)
+        routes.group_by { |route| extract_parent_namespace(route[:path]) }
+          .map { |parent_ns, ns_routes| build_resource(controller, ns_routes, parent_ns) }
       end
+    end
+
+    # Internal: Builds a Resource from routes for a specific controller and namespace
+    def build_resource(controller, ns_routes, parent_namespace)
+      paths = ns_routes.map { |r| r[:path] }.uniq
+      base_path = calculate_base_path(paths, controller)
+
+      operations = ns_routes.map { |route| build_operation(controller, route) }
+      operations = make_operation_names_unique(operations)
+
+      Resource.new(
+        name: controller.tr("/", "_").camelize,
+        path: base_path.start_with?("/") ? base_path : "/#{base_path}",
+        operations: operations,
+        parent_namespace: parent_namespace,
+      )
+    end
+
+    # Internal: Builds an Operation from a route hash
+    def build_operation(controller, route)
+      path_param_names = route[:path].scan(/:([a-zA-Z_][a-zA-Z0-9_]*)/).flatten
+      param_types = extract_all_param_types(controller, route)
+
+      Operation.new(
+        method: route[:method],
+        action: simplify_operation_name(route),
+        path: route[:path],
+        path_params: build_path_params(path_param_names, param_types),
+        body_params: build_body_params(route[:method], path_param_names, param_types),
+        response_type: infer_operation_response_type(route),
+      )
     end
 
     # Internal: Extracts all parameter types from route metadata and controller DSL
@@ -692,6 +746,42 @@ module TypeSpecFromSerializers
       type = route[:response_type]
       return "unknown" if type == route[:action]
       route[:action] == "index" ? "#{type}[]" : type
+    end
+
+    # Internal: Makes operation names unique within an interface
+    # When there are duplicates, appends HTTP method as suffix
+    def make_operation_names_unique(operations)
+      name_counts = operations.group_by(&:action).transform_values(&:count)
+      name_usage = Hash.new(0)
+
+      operations.map do |op|
+        next op unless name_counts[op.action] > 1
+
+        # Multiple operations with same name - differentiate by HTTP method
+        name_usage[op.action] += 1
+        new_action = name_usage[op.action] == 1 ? op.action : "#{op.action}#{op.method.capitalize}"
+
+        op.dup.tap { |new_op| new_op.action = new_action }
+      end
+    end
+
+    # Internal: Extracts parent namespace from nested route paths
+    # E.g., "/lands/{land_id}/comments" → "Land"
+    #       "/tasks/{task_id}/comments" → "Task"
+    def extract_parent_namespace(path)
+      # Match pattern like /resource/:resource_id/nested (Rails uses : notation)
+      path[%r{^/([^/]+)/:[^/]+_id/}, 1]&.singularize&.camelize
+    end
+
+    # Internal: Simplifies operation name using REST conventions
+    # Maps HTTP method + path pattern to standard REST actions
+    def simplify_operation_name(route)
+      action, method = route.values_at(:action, :method)
+
+      # Check config mapping first
+      TypeSpecFromSerializers.config.action_to_operation_mapping[action] ||
+        # Apply REST conventions: POST to collection → create, GET → index
+        (action == "index" && method == "POST" ? "create" : action)
     end
 
     # Internal: Generates operation name from route path and action
@@ -1161,6 +1251,9 @@ module TypeSpecFromSerializers
 
         # Path where the compiled OpenAPI spec should be placed
         openapi_path: root.join("public", "openapi.yaml"),
+
+        # Maximum line length before switching to multiline format for operations
+        max_line_length: 100,
 
         # Project root directory
         root: root,

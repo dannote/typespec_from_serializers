@@ -522,26 +522,41 @@ namespace SampleApp {
   namespace Routes {
     @route("/videos")
     interface Videos {
-      @get index_videos(): Video[];
-      @post create_videos(): Video;
-      @get video(@path id: string): VideoWithComments;
-      @patch update_video(@path id: string): Video;
-      @delete destroy_video(@path id: string): Video;
+      @get index(): Video[];
+      @post create(): Video;
+      @get show(@path id: string): VideoWithComments;
+      @patch update(@path id: string): Video;
+      @delete destroy(@path id: string): Video;
       @route("/{id}/publish")
-      @post publish_video(@path id: string): Video;
+      @post publish(@path id: string): Video;
       @route("/search")
-      @post search_videos(): Video[];
+      @post search(): Video[];
     }
 
     @route("/videos/{video_id}/comments")
     interface Comments {
-      @get video_comments(@path video_id: string): Comment[];
-      @post create_video_comments(@path video_id: string): Comment;
-      @patch update_video_comment(@path video_id: string, @path id: string): Comment;
-      @delete destroy_video_comment(@path video_id: string, @path id: string): Comment;
+      @get index(@path video_id: string): Comment[];
+      @post create(@path video_id: string): Comment;
+      @patch update(@path video_id: string, @path id: string): Comment;
+      @delete destroy(@path video_id: string, @path id: string): Comment;
     }
   }
 }
+```
+
+**Operation Naming:** Operations use clean, action-based names (`index`, `show`, `create`, `update`, `destroy`) scoped to their interface. Custom actions keep their names (`publish`, `search`, `export`). Names only need to be unique within each interface, eliminating redundant prefixes like `video_` or `create_videos`.
+
+**Multiline Formatting:** Operations with many parameters (>100 characters) are automatically formatted across multiple lines for better readability:
+
+```typespec
+@post search(
+  query: string,
+  bounds: string,
+  area_sq_m_gteq: int32,
+  area_sq_m_lteq: int32,
+  cadastral_value_cents_gteq: int32,
+  cadastral_value_cents_lteq: int32,
+): Land[];
 ```
 
 #### Typing Request Parameters

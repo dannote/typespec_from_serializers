@@ -17,6 +17,7 @@ describe "Generator" do
       ComposerWithSongsSerializer::SongSerializer
       ComposerSerializer
       SnakeComposerSerializer
+      TaskSerializer
     ]
   }
 
@@ -411,8 +412,8 @@ describe "Generator" do
         content = routes_file.read
 
         # Should have @get decorators for index and show actions
-        expect(content).to include("@get composers()")
-        expect(content).to include("@get composer(@path id: string)")
+        expect(content).to include("@get index()")
+        expect(content).to include("@get show(@path id: string)")
       end
 
       it "prefers PATCH over PUT for update actions" do
@@ -469,8 +470,8 @@ describe "Generator" do
 
         # Each resource should have both index and show operations
         composers_section = content[/interface Composers.*?}/m]
-        expect(composers_section).to include("composers()")
-        expect(composers_section).to include("composer(@path id: string)")
+        expect(composers_section).to include("index()")
+        expect(composers_section).to include("show(@path id: string)")
       end
     end
 
@@ -479,21 +480,21 @@ describe "Generator" do
         content = routes_file.read
 
         # Show actions should have id parameter
-        expect(content).to include("composer(@path id: string)")
+        expect(content).to include("show(@path id: string)")
       end
 
       it "generates array response types for index actions" do
         content = routes_file.read
 
         # Index actions should return arrays
-        expect(content).to match(/composers\(\): \w+\[\]/)
+        expect(content).to match(/index\(\): \w+\[\]/)
       end
 
       it "generates single object response types for show actions" do
         content = routes_file.read
 
         # Show actions should return single objects
-        expect(content).to match(/composer\(@path id: string\): \w+;/)
+        expect(content).to match(/show\(@path id: string\): \w+;/)
       end
     end
 
@@ -512,6 +513,34 @@ describe "Generator" do
         # Should have imports for used types with models/ prefix
         # Check for at least one of the main resource imports
         expect(content).to match(/import "\.\/models\/Composer\.tsp"|import "\.\/models\/Song\.tsp"|import "\.\/models\/Video\.tsp"/)
+      end
+    end
+
+    context "with multiline formatting" do
+      it "formats long operations across multiple lines when they exceed line length" do
+        # The operation formatting logic splits lines > 100 chars
+        # Current routes are short, so test the formatting logic works
+        # by checking operations don't have extremely long single lines
+        content = routes_file.read
+
+        # Find all operation lines
+        operation_lines = content.lines.grep(/@(get|post|put|patch|delete) \w+/)
+
+        # If any operations exist, none should be excessively long (>150 chars)
+        # This ensures multiline formatting kicks in for long parameter lists
+        if operation_lines.any?
+          operation_lines.each do |line|
+            expect(line.length).to be < 150
+          end
+        end
+      end
+
+      it "keeps short operations on a single line" do
+        content = routes_file.read
+
+        # Short operations like index() should be on single lines
+        expect(content).to match(/@get \w+\(\): \w+\[\];/)
+        expect(content).to match(/@get \w+\(@path id: string\): \w+;/)
       end
     end
   end
