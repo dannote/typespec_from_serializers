@@ -574,20 +574,28 @@ module TypeSpecFromSerializers
         base_path = path_segments.any? ? path_segments.first.join("/")&.split("/{")&.first || controller : controller
 
         operations = routes.map do |route|
-          path_params = route[:path].scan(/{([^}]+)}/).flatten
+          # Extract path parameters from the full route path
+          path_params = route[:path].scan(/:([a-zA-Z_][a-zA-Z0-9_]*)/).flatten
+
           response_type = if route[:response_type] == route[:action]
             "unknown"
           else
             (route[:action] == "index") ? "#{route[:response_type]}[]" : route[:response_type]
           end
 
-          # Use Rails route name if available, otherwise generate like Rails path helpers
-          operation_name = route[:route_name] || generate_path_helper_name(route[:path], route[:action])
+          # Use Rails route name if available, otherwise use action + path
+          operation_name = if route[:route_name]
+            route[:route_name]
+          else
+            # For routes without Rails names, prefix with action for readability
+            base = generate_path_helper_name(route[:path], route[:action])
+            "#{route[:action]}_#{base}"
+          end
 
           Operation.new(
             method: route[:method],
             action: operation_name,
-            path_params: (route[:action] == "show") ? ["id"] : path_params,
+            path_params: path_params,
             response_type: response_type,
           )
         end
@@ -607,14 +615,14 @@ module TypeSpecFromSerializers
       segments = path.split("/").reject { |s| s.empty? || s.start_with?("{", ":") }
 
       # Build name from segments: /lands/:land_id/comments → land_comments
-      # For member actions (show, update, destroy), use singular form
-      # For collection actions (index, create), use plural form
+      # Singularize parent resources (all segments except the last)
+      # For member actions, also singularize the last segment
       if action.in?(%w[show update destroy])
-        # Member action: use singular of last segment
-        base = segments.map.with_index { |s, i| i == segments.size - 1 ? s.singularize : s }.join("_")
+        # Member action: singularize all segments
+        base = segments.map(&:singularize).join("_")
       else
-        # Collection action: use plural form
-        base = segments.join("_")
+        # Collection action: singularize parent segments, keep last plural
+        base = segments.map.with_index { |s, i| i < segments.size - 1 ? s.singularize : s }.join("_")
       end
 
       # Add action prefix for special actions (new, edit)

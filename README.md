@@ -421,7 +421,9 @@ For example:
 ```ruby
 # config/routes.rb
 defaults format: :json, export: true do
-  resources :videos, only: [:index, :show]
+  resources :videos do
+    resources :comments, only: [:index, :create, :update]
+  end
 end
 
 # app/controllers/videos_controller.rb
@@ -440,7 +442,16 @@ namespace SampleApp {
     @route("/videos")
     interface Videos {
       @get videos(): Video[];
+      @post create_videos(@body body: Video): Video;
       @get video(@path id: string): VideoWithComments;  // inferred from serializer
+      @patch update_video(@path id: string, @body body: Video): Video;
+    }
+
+    @route("/videos/:video_id/comments")
+    interface Comments {
+      @get video_comments(@path video_id: string): Comment[];
+      @post create_video_comments(@path video_id: string, @body body: Comment): Comment;
+      @patch update_video_comment(@path video_id: string, @path id: string, @body body: Comment): Comment;
     }
   }
 }
