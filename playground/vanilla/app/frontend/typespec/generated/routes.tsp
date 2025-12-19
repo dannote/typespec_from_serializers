@@ -11,6 +11,9 @@ import "./models/VideoWithSong.tsp";
 
 using TypeSpec.Http;
 
+@service(#{
+  title: "SampleApp API",
+})
 namespace SampleApp {
   namespace Routes {
     @route("/composers")

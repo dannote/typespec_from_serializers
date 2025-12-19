@@ -134,6 +134,47 @@ namespace SampleApp {
 >
 > This reflects the default setup for TypeSpec generation. You can customize everything—check out the [configuration options][config] for full control!
 
+## Automatic Type Inference ✨
+
+Types are inferred from enums and SQL schema. Use `type:` for custom methods:
+
+```ruby
+class Task < ApplicationRecord
+  enum status: {pending: 0, in_progress: 1, completed: 2}
+end
+
+class TaskSerializer < BaseSerializer
+  attributes :title, :status  # SQL + enum → string, union
+
+  attribute :assignee_name, type: :string
+  def assignee_name = task.assignee&.full_name || "Unassigned"
+
+  attribute :notes, type: :string, optional: true
+  def notes = task.internal_notes
+
+  attribute :external_id, type: "string | int32"
+  def external_id = task.external_system_id || task.legacy_id
+
+  # Sorbet sigs auto-infer complex types too
+  attribute :watchers
+  sig { returns(T::Array[{id: Integer, email: String}]) }
+  def watchers = task.watchers.map { |w| {id: w.id, email: w.email} }
+end
+```
+
+**Generates:**
+
+```typespec
+model Task {
+  title: string;
+  status: "pending" | "in_progress" | "completed";
+  assigneeName: string;
+  notes?: string;
+  externalId: string | int32;
+  watchers: {id: int32, email: string}[];
+}
+```
+
 ## Installation 💿
 
 Add this line to your application's Gemfile:

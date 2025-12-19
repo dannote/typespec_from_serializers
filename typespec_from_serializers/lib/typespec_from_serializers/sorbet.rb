@@ -106,8 +106,8 @@ module TypeSpecFromSerializers
 
         # Handle Sorbet type annotations
         sorbet_type_to_typespec(type_annotation)
-      rescue
-        # Type extraction failed
+      rescue => e
+        warn "TypeSpec: Failed to extract type for #{klass}##{method_name}: #{e.class} - #{e.message}"
         nil
       end
 
@@ -262,32 +262,115 @@ module TypeSpecFromSerializers
       # Returns Hash with :typespec_type, :nilable, :array, :type_class keys
       # Returns nil if type cannot be mapped
       def sorbet_type_to_typespec(sorbet_type)
-        result = {
-          typespec_type: nil,
-          nilable: false,
-          array: false,
-          type_class: nil,
-        }
+        base_result = {typespec_type: nil, nilable: false, array: false, type_class: nil}
 
-        # Handle T.nilable wrapper
+        # Unwrap T.nilable if present
         if nilable?(sorbet_type)
-          result[:nilable] = true
+          base_result[:nilable] = true
           sorbet_type = unwrap_nilable(sorbet_type)
         end
 
-        # Handle T::Array wrapper
-        if sorbet_type.is_a?(T::Types::TypedArray)
-          result[:array] = true
-          sorbet_type = sorbet_type.type
+        # Dispatch to specific type handlers
+        handle_array_type(sorbet_type, base_result) ||
+          handle_hash_type(sorbet_type, base_result) ||
+          handle_set_type(sorbet_type, base_result) ||
+          handle_union_type(sorbet_type, base_result) ||
+          handle_untyped(sorbet_type, base_result) ||
+          handle_simple_type(sorbet_type, base_result)
+      end
+
+      # Internal: Handle T::Array types
+      def handle_array_type(sorbet_type, result)
+        return nil unless sorbet_type.is_a?(T::Types::TypedArray)
+
+        result[:array] = true
+        element_type = sorbet_type.type
+
+        # Shape types inside arrays: T::Array[{lon: Float, lat: Float}]
+        if shape_type = extract_shape_typespec(element_type)
+          return result.merge(typespec_type: shape_type)
         end
 
-        # Extract the raw class if available
+        # Nested complex types: T::Array[T::Array[X]], T::Array[T::Hash[K,V]]
+        if complex_element?(element_type)
+          nested = sorbet_type_to_typespec(element_type)
+          return nested&.then { |n|
+            typespec = n[:array] ? "#{n[:typespec_type]}[]" : n[:typespec_type]
+            result.merge(typespec_type: typespec)
+          }
+        end
+
+        # Simple array elements
+        handle_simple_type(element_type, result)
+      end
+
+      # Internal: Handle T::Hash types
+      def handle_hash_type(sorbet_type, result)
+        return nil unless sorbet_type.is_a?(T::Types::TypedHash)
+
+        value_type = map_sorbet_type(sorbet_type.values)
+        result.merge(typespec_type: "Record<#{value_type}>")
+      end
+
+      # Internal: Handle T::Set types (converted to arrays in TypeSpec)
+      def handle_set_type(sorbet_type, result)
+        return nil unless defined?(T::Types::TypedSet) && sorbet_type.is_a?(T::Types::TypedSet)
+
+        element_type = map_sorbet_type(sorbet_type.type)
+        result.merge(typespec_type: element_type, array: true)
+      end
+
+      # Internal: Handle T.any union types
+      def handle_union_type(sorbet_type, result)
+        return nil unless sorbet_type.is_a?(T::Types::Union) && !nilable?(sorbet_type)
+
+        non_nil_types = sorbet_type.types.reject { |t| t == T::Utils.coerce(NilClass) }
+
+        case non_nil_types.size
+        when 1
+          sorbet_type_to_typespec(non_nil_types.first)
+        else
+          mapped_types = non_nil_types.map { |t| map_sorbet_type(t) }.compact.uniq
+          typespec = mapped_types.size == 1 ? mapped_types.first : mapped_types.join(" | ")
+          result.merge(typespec_type: typespec)
+        end
+      end
+
+      # Internal: Handle T.untyped
+      def handle_untyped(sorbet_type, result)
+        return nil unless sorbet_type.is_a?(T::Types::Untyped)
+
+        result.merge(typespec_type: "unknown")
+      end
+
+      # Internal: Handle simple types (String, Integer, custom classes, etc.)
+      def handle_simple_type(sorbet_type, result)
         result[:type_class] = extract_type_class(sorbet_type)
-
-        # Map the core type
         result[:typespec_type] = map_sorbet_type(sorbet_type)
-
         result[:typespec_type] ? result : nil
+      end
+
+      # Internal: Extract shape type from FixedHash (e.g., {lon: Float, lat: Float})
+      def extract_shape_typespec(type)
+        return nil unless defined?(T::Types::FixedHash) && type.is_a?(T::Types::FixedHash)
+
+        # Access shape fields through multiple fallback paths
+        types_hash = [:@types, :@inner_types].find do |ivar|
+          type.instance_variable_get(ivar) rescue nil
+        end&.then { |ivar| type.instance_variable_get(ivar) } ||
+          (type.types if type.respond_to?(:types))
+
+        return nil unless types_hash
+
+        fields = types_hash.transform_values { |v| map_sorbet_type(v) }
+        "{#{fields.map { |k, v| "#{k}: #{v}" }.join(", ")}}"
+      end
+
+      # Internal: Check if type is a complex nested type
+      def complex_element?(type)
+        type.is_a?(T::Types::TypedArray) ||
+          type.is_a?(T::Types::TypedHash) ||
+          (defined?(T::Types::TypedSet) && type.is_a?(T::Types::TypedSet))
       end
 
       # Internal: Extract the Ruby class from a Sorbet type object.
@@ -296,20 +379,36 @@ module TypeSpecFromSerializers
       #
       # Returns Class or nil
       def extract_type_class(sorbet_type)
-        # Handle SimplePairUnion
-        if sorbet_type.instance_of?(::T::Private::Types::SimplePairUnion)
-          raw_a, raw_b = sorbet_type.instance_variable_get(:@raw_a), sorbet_type.instance_variable_get(:@raw_b)
-          type_class = (raw_a == NilClass) ? raw_b : raw_a
-          return type_class if type_class.is_a?(Class)
-        end
-
-        # Handle TypedArray, Simple type, or class types
-        return sorbet_type.type if sorbet_type.respond_to?(:type) && sorbet_type.type.is_a?(Class)
-        return sorbet_type.raw_type if sorbet_type.respond_to?(:raw_type) && sorbet_type.raw_type.is_a?(Class)
-
-        sorbet_type if sorbet_type.is_a?(Class)
+        # Try multiple extraction strategies in order of preference
+        extract_from_pair_union(sorbet_type) ||
+          extract_from_typed_wrapper(sorbet_type) ||
+          extract_direct_class(sorbet_type)
       rescue
         # Type introspection failed - return nil
+      end
+
+      # Internal: Extract class from SimplePairUnion (e.g., T::Boolean)
+      def extract_from_pair_union(sorbet_type)
+        return nil unless sorbet_type.instance_of?(::T::Private::Types::SimplePairUnion)
+
+        [:@raw_a, :@raw_b]
+          .map { |ivar| sorbet_type.instance_variable_get(ivar) }
+          .reject { |type| type == NilClass }
+          .find { |type| type.is_a?(Class) }
+      end
+
+      # Internal: Extract class from typed wrappers (TypedArray, Simple, etc.)
+      def extract_from_typed_wrapper(sorbet_type)
+        [:type, :raw_type]
+          .lazy
+          .select { |method| sorbet_type.respond_to?(method) }
+          .map { |method| sorbet_type.public_send(method) }
+          .find { |value| value.is_a?(Class) }
+      end
+
+      # Internal: Extract class if sorbet_type itself is a Class
+      def extract_direct_class(sorbet_type)
+        sorbet_type if sorbet_type.is_a?(Class)
       end
 
       # Internal: Check if a Sorbet type is nilable (T.nilable wrapper).
@@ -321,8 +420,7 @@ module TypeSpecFromSerializers
         end
 
         # T.nilable wraps types in a T::Types::Union with NilClass
-        sorbet_type.respond_to?(:raw_type) &&
-          sorbet_type.is_a?(T::Types::Union) &&
+        sorbet_type.is_a?(T::Types::Union) &&
           sorbet_type.types.any? { |t| t == T::Utils.coerce(NilClass) }
       end
 
@@ -344,13 +442,19 @@ module TypeSpecFromSerializers
       #
       # Returns Symbol for built-in types, String for custom types, or nil
       def map_sorbet_type(sorbet_type)
-        type_class = sorbet_type.respond_to?(:raw_type) ? sorbet_type.raw_type : sorbet_type
-        return nil unless type_class.is_a?(Class) || sorbet_type.respond_to?(:raw_type)
+        type_class = extract_type_class(sorbet_type)
+        return nil unless type_class
 
-        type_name = type_class.is_a?(Class) ? type_class.name : type_class.to_s
+        type_name = type_class.name
+        return "unknown" unless type_name
 
-        TypeSpecFromSerializers.config.sorbet_to_typespec_type_mapping[type_name] ||
-          ((type_name == "T::Boolean") ? :boolean : (type_name if type_class.is_a?(Class)))
+        config.sorbet_to_typespec_type_mapping[type_name] ||
+          (type_name == "T::Boolean" ? :boolean : type_name)
+      end
+
+      # Internal: Shorthand for config access
+      def config
+        TypeSpecFromSerializers.config
       end
     end
   end

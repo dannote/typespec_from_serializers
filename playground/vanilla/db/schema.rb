@@ -10,7 +10,8 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema.define(version: 2024_02_27_112250) do
+ActiveRecord::Schema.define(version: 2025_12_19_000001) do
+
   create_table "composers", force: :cascade do |t|
     t.text "first_name"
     t.text "last_name"
@@ -28,6 +29,29 @@ ActiveRecord::Schema.define(version: 2024_02_27_112250) do
     t.index ["composer_id"], name: "index_songs_on_composer_id"
   end
 
+  create_table "tasks", force: :cascade do |t|
+    t.string "title", null: false
+    t.text "description"
+    t.integer "status", default: 0, null: false
+    t.integer "priority", default: 0, null: false
+    t.date "due_date"
+    t.text "internal_notes"
+    t.string "external_system_id"
+    t.integer "legacy_id"
+    t.integer "assignee_id"
+    t.datetime "created_at", precision: 6, null: false
+    t.datetime "updated_at", precision: 6, null: false
+    t.index ["assignee_id"], name: "index_tasks_on_assignee_id"
+  end
+
+  create_table "users", force: :cascade do |t|
+    t.string "email", null: false
+    t.string "full_name", null: false
+    t.datetime "created_at", precision: 6, null: false
+    t.datetime "updated_at", precision: 6, null: false
+    t.index ["email"], name: "index_users_on_email", unique: true
+  end
+
   create_table "video_clips", force: :cascade do |t|
     t.text "title"
     t.text "youtube_id"
@@ -40,6 +64,7 @@ ActiveRecord::Schema.define(version: 2024_02_27_112250) do
   end
 
   add_foreign_key "songs", "composers"
+  add_foreign_key "tasks", "users", column: "assignee_id"
   add_foreign_key "video_clips", "composers"
   add_foreign_key "video_clips", "songs"
 end

@@ -900,12 +900,16 @@ module TypeSpecFromSerializers
         if controller_class.respond_to?(:type_for_method)
           type_definition = controller_class.type_for_method(method_name)
           if type_definition.is_a?(Hash)
-            type_definition.each do |key, type_class|
+            type_definition.each do |key, type_value|
               key_str = key.to_s
               # Only set if not already defined by route_params DSL
               unless param_types.key?(key_str)
-                typespec_type = map_sorbet_type_to_typespec(type_class.to_s)
-                param_types[key_str] = typespec_type if typespec_type
+                begin
+                  typespec_type = map_type_annotation_to_typespec(type_value)
+                  param_types[key_str] = typespec_type if typespec_type
+                rescue => e
+                  warn "TypeSpec: Failed to map parameter '#{key}' for #{controller_class}##{method_name}: #{e.class} - #{e.message}"
+                end
               end
             end
             type_found = true
@@ -949,6 +953,27 @@ module TypeSpecFromSerializers
       end
 
       param_types
+    end
+
+    # Internal: Maps type annotations (Class or Sorbet type) to TypeSpec types
+    def map_type_annotation_to_typespec(type_value)
+      # Handle plain Ruby classes
+      if type_value.is_a?(Class)
+        return map_type_class_to_typespec(type_value)
+      end
+
+      # Handle Sorbet type objects
+      if Sorbet.available?
+        type_info = Sorbet.send(:sorbet_type_to_typespec, type_value)
+        if type_info
+          base_type = type_info[:typespec_type]
+          base_type = "#{base_type}[]" if type_info[:array]
+          return base_type
+        end
+      end
+
+      # Fallback: try string mapping
+      map_sorbet_type_to_typespec(type_value.to_s)
     end
 
     # Internal: Maps Sorbet type strings to TypeSpec types using existing config

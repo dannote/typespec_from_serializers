@@ -11,6 +11,12 @@ require "typespec_from_serializers"
 require "rspec/given"
 
 begin
+  require "sorbet-runtime"
+rescue LoadError
+  # sorbet-runtime is optional
+end
+
+begin
   require "pry-byebug"
 rescue LoadError
 end
