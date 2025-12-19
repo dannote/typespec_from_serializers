@@ -1,4 +1,43 @@
-# [2.3.0](https://github.com/ElMassimo/types_from_serializers/compare/types_from_serializers@2.2.0...types_from_serializers@2.3.0) (2024-08-23)
+# TypeSpec From Serializers Changelog
+
+## [0.1.1] - 2024-12-19
+
+Initial release - fork of `types_from_serializers` adapted to generate TypeSpec instead of TypeScript.
+
+### Features
+
+**Routes Generation**
+- Generate TypeSpec HTTP interfaces from Rails routes automatically
+- Type path parameters in `routes.rb`: `type: { id: Integer }`
+- Type request body in controllers with `type` DSL
+- Nested routes organized in namespaces
+- Filter exported routes with `export_if` configuration
+
+**Sorbet Integration**
+- Automatic type inference from Sorbet signatures
+- Support for `T.nilable`, `T::Array`, unions, and complex shapes
+- Works with RBI files (Tapioca-generated)
+
+**Type System**
+- Simple `type:` syntax for explicit types
+- Union types: `type: "string | int32"`
+- Automatic inference from SQL schema and ActiveRecord enums
+- Custom TypeSpec model references
+
+**OpenAPI**
+- Compile TypeSpec to OpenAPI 3.0: `rake typespec_from_serializers:compile_openapi`
+- Setup dependencies: `rake typespec_from_serializers:setup`
+
+**Developer Experience**
+- Automatic regeneration in development mode
+- Vite live reload support
+- Incremental generation for modified files only
+
+---
+
+# Previous versions (types_from_serializers)
+
+## [2.3.0](https://github.com/ElMassimo/types_from_serializers/compare/types_from_serializers@2.2.0...types_from_serializers@2.3.0) (2024-08-23)
 
 
 ### Features
