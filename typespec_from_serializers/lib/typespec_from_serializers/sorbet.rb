@@ -130,61 +130,61 @@ module TypeSpecFromSerializers
         class_name = klass.name
         return nil unless class_name
 
-        # Look up in RBI signature cache
-        signature = find_rbi_signature(class_name, method_name.to_s)
+        # Look up in unified RBI index
+        signature = rbi_unified_index["#{class_name}##{method_name}"]
         return nil unless signature
 
         # Parse the signature return type
         parse_rbi_return_type(signature)
       end
 
-      # Internal: Find RBI signature for a class method.
+      # Internal: Build a unified index from all RBI files.
       #
-      # Returns String signature or nil
-      def find_rbi_signature(class_name, method_name)
-        cache_key = "#{class_name}##{method_name}"
-        @rbi_signature_cache ||= {}
-        @rbi_signature_cache[cache_key] ||= search_rbi_files_for_signature(class_name, method_name)
+      # Returns Hash mapping "ClassName#method_name" => return_type_string
+      def rbi_unified_index
+        return @rbi_unified_index if defined?(@rbi_unified_index)
+
+        @rbi_unified_index = {}
+        return @rbi_unified_index unless rbi_path&.exist?
+
+        # Find RBI files, excluding gems/ (third-party gems won't have serializer methods)
+        # Only check annotations/ and dsl/ directories for performance
+        rbi_files = [
+          *Pathname.glob(rbi_path.join("annotations", "**", "*.rbi")),
+          *Pathname.glob(rbi_path.join("dsl", "**", "*.rbi")),
+        ]
+
+        # Parse each file and merge into unified index
+        rbi_files.each do |rbi_file|
+          tree = parse_rbi_file_cached(rbi_file)
+          next unless tree
+
+          # Extract all method signatures from this file
+          tree.index.each do |fqn, nodes|
+            next unless fqn.include?("#") # Only instance methods
+
+            nodes.each do |node|
+              return_type = node&.sigs&.first&.return_type
+              @rbi_unified_index[fqn] ||= return_type if return_type
+            end
+          end
+        rescue
+          # Ignore errors in individual files
+          next
+        end
+
+        @rbi_unified_index
       end
 
-      # Internal: Search through RBI files to find a method signature.
-      def search_rbi_files_for_signature(class_name, method_name)
-        return unless rbi_path
-
-        rbi_file_paths_for_class(class_name)
-          .select(&:exist?)
-          .lazy
-          .filter_map { |rbi_file| extract_signature_from_rbi_file(rbi_file, class_name, method_name) }
-          .first
-      end
-
-      # Internal: Generate possible RBI file paths for a class.
-      def rbi_file_paths_for_class(class_name)
-        parts = class_name.split("::")
-
-        [
-          # Try: sorbet/rbi/foo/bar/baz.rbi (nested structure)
-          rbi_path.join(*parts.map(&:underscore)).sub_ext(".rbi"),
-
-          # Try: sorbet/rbi/foo_bar_baz.rbi (flat structure)
-          rbi_path.join("#{class_name.gsub("::", "_").underscore}.rbi"),
-
-          # Try: sorbet/rbi/annotations/*.rbi (all annotation files)
-          *Pathname.glob(rbi_path.join("annotations", "*.rbi")),
-
-          # Try: sorbet/rbi/gems/**/*.rbi (Tapioca gem RBIs)
-          *Pathname.glob(rbi_path.join("gems", "**", "*.rbi")),
-        ].uniq
-      end
-
-      # Internal: Extract a method signature from an RBI file using RBI parser and Index.
-      def extract_signature_from_rbi_file(rbi_file, class_name, method_name)
-        tree = ::RBI::Parser.parse_file(rbi_file)
-        fqn = "#{class_name}##{method_name}"
-        tree.index[fqn]&.first&.sigs&.first&.return_type
+      # Internal: Parse an RBI file and cache the result.
+      #
+      # Returns parsed RBI tree or nil if parsing fails
+      def parse_rbi_file_cached(rbi_file)
+        @rbi_tree_cache ||= {}
+        @rbi_tree_cache[rbi_file.to_s] ||= ::RBI::Parser.parse_file(rbi_file)
       rescue
-        # File read or parsing error - gracefully ignore
-        nil
+        # Cache the failure to avoid re-parsing
+        @rbi_tree_cache[rbi_file.to_s] = nil
       end
 
       # Internal: Parse a return type from RBI signature using RBI type system.
