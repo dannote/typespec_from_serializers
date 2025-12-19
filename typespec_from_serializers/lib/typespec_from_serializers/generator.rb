@@ -114,6 +114,7 @@ module TypeSpecFromSerializers
     :output_dir,
     :custom_typespec_dir,
     :name_from_serializer,
+    :param_method_suffix,
     :global_types,
     :sort_properties_by,
     :sql_to_typespec_type_mapping,
@@ -123,6 +124,7 @@ module TypeSpecFromSerializers
     :transform_keys,
     :namespace,
     :export_if,
+    :route_param_types,
     keyword_init: true,
   ) do
     def relative_custom_typespec_dir
@@ -323,38 +325,47 @@ module TypeSpecFromSerializers
   # Internal: Represents a TypeSpec resource interface
   Resource = Struct.new(:name, :path, :operations, keyword_init: true) do
     def as_typespec
+      operations_str = operations.map { |op| "  #{op.as_typespec}" }.join("\n")
       <<~TSP
-        #{"  " * 1}@route("#{path}")
-        #{"  " * 1}interface #{name} {
-        #{"  " * 1}#{operations.map(&:as_typespec).join("\n  ")}
-        #{"  " * 1}}
+        @route("#{path}")
+        interface #{name} {
+        #{operations_str}
+        }
       TSP
     end
   end
 
   # Internal: Represents a TypeSpec operation within a resource
-  Operation = Struct.new(:method, :action, :path_params, :response_type, keyword_init: true) do
+  Operation = Struct.new(:method, :action, :path_params, :body_params, :response_type, keyword_init: true) do
+    HTTP_METHOD_MAP = {
+      "GET" => "get", "POST" => "post", "PUT" => "put",
+      "PATCH" => "patch", "DELETE" => "delete",
+    }.freeze
+
     def as_typespec
-      method_map = {
-        "GET" => "get",
-        "POST" => "post",
-        "PUT" => "put",
-        "PATCH" => "patch",
-        "DELETE" => "delete",
-      }
-      tsp_method = method_map[method] || method.downcase
+      tsp_method = HTTP_METHOD_MAP[method] || method.downcase
       operation_name = TypeSpecFromSerializers.config.action_to_operation_mapping[action] || action
       params = params_typespec
       params_str = params.empty? ? "()" : "(#{params})"
 
-      "#{"  " * 1}@#{tsp_method} #{operation_name}#{params_str}: #{response_type.gsub("::", "")};"
+      "@#{tsp_method} #{operation_name}#{params_str}: #{response_type.delete(":")};"
     end
 
+    private
+
     def params_typespec
-      params = []
-      params += path_params.map { |param| "@path #{param}: string" } if path_params.any?
-      params << "@body body: #{response_type.gsub("::", "")}" if method.in?(%w[POST PUT PATCH])
-      params.join(", ")
+      [*format_path_params, *format_body_params].join(", ")
+    end
+
+    def format_path_params
+      path_params.map do |param|
+        param.is_a?(Hash) ? "@path #{param[:name]}: #{param[:type]}" : "@path #{param}: string"
+      end
+    end
+
+    def format_body_params
+      return [] unless body_params&.any?
+      body_params.map { |name, type| "#{name}: #{type}" }
     end
   end
 
@@ -423,14 +434,14 @@ module TypeSpecFromSerializers
         generate_index_file
       end
 
-      generate_routes
+      controllers = generate_routes
 
       serializers = loaded_serializers
       serializers.each do |serializer|
         generate_model_for(serializer)
       end
 
-      serializers
+      {serializers: serializers, controllers: controllers}
     end
 
     def generate_changed
@@ -466,13 +477,16 @@ module TypeSpecFromSerializers
 
     # Internal: Generates TypeSpec routes from Rails routes
     def generate_routes
-      return unless defined?(Rails) && Rails.application
+      return [] unless defined?(Rails) && Rails.application
 
       routes = collect_rails_routes
       cache_key = routes.map { |r| r.operations.map { |op| "#{op.method}#{r.path}#{op.action}" }.join }.join
       write_if_changed(filename: "routes", cache_key: cache_key) {
         routes_content(routes)
       }
+
+      # Return list of controllers with routes
+      routes.map(&:name).sort
     end
 
     # Internal: Checks if it should avoid generating an model.
@@ -565,6 +579,7 @@ module TypeSpecFromSerializers
             path: path,
             response_type: response_type,
             route_name: route_name,
+            param_types: route.defaults[:type] || {},
           }
         end
       end
@@ -574,29 +589,15 @@ module TypeSpecFromSerializers
         base_path = path_segments.any? ? path_segments.first.join("/")&.split("/{")&.first || controller : controller
 
         operations = routes.map do |route|
-          # Extract path parameters from the full route path
-          path_params = route[:path].scan(/:([a-zA-Z_][a-zA-Z0-9_]*)/).flatten
-
-          response_type = if route[:response_type] == route[:action]
-            "unknown"
-          else
-            (route[:action] == "index") ? "#{route[:response_type]}[]" : route[:response_type]
-          end
-
-          # Use Rails route name if available, otherwise use action + path
-          operation_name = if route[:route_name]
-            route[:route_name]
-          else
-            # For routes without Rails names, prefix with action for readability
-            base = generate_path_helper_name(route[:path], route[:action])
-            "#{route[:action]}_#{base}"
-          end
+          path_param_names = route[:path].scan(/:([a-zA-Z_][a-zA-Z0-9_]*)/).flatten
+          param_types = extract_all_param_types(controller, route)
 
           Operation.new(
             method: route[:method],
-            action: operation_name,
-            path_params: path_params,
-            response_type: response_type,
+            action: route[:route_name] || generate_operation_name(route),
+            path_params: build_path_params(path_param_names, param_types),
+            body_params: build_body_params(route[:method], path_param_names, param_types),
+            response_type: infer_operation_response_type(route),
           )
         end
 
@@ -606,6 +607,44 @@ module TypeSpecFromSerializers
           operations: operations,
         )
       end
+    end
+
+    # Internal: Extracts all parameter types from route metadata and controller DSL
+    def extract_all_param_types(controller, route)
+      route_param_types = route[:param_types]
+        .transform_keys(&:to_s)
+        .transform_values { |v| map_type_class_to_typespec(v) }
+
+      controller_class = "#{controller.camelize}Controller".safe_constantize
+      controller_param_types = controller_class ?
+        extract_param_types_from_controller(controller_class, route[:action]) : {}
+
+      controller_param_types.merge(route_param_types)
+    end
+
+    # Internal: Builds typed path parameters with defaults
+    def build_path_params(param_names, param_types)
+      param_names.map do |name|
+        param_types[name] ? {name: name, type: param_types[name]} : {name: name, type: "string"}
+      end
+    end
+
+    # Internal: Builds body parameters (excludes path params, only for non-GET)
+    def build_body_params(http_method, path_param_names, param_types)
+      return {} if http_method == "GET"
+      param_types.reject { |key, _| path_param_names.include?(key) }
+    end
+
+    # Internal: Infers operation response type from route
+    def infer_operation_response_type(route)
+      return "unknown" if route[:response_type] == route[:action]
+      route[:action] == "index" ? "#{route[:response_type]}[]" : route[:response_type]
+    end
+
+    # Internal: Generates operation name from route path and action
+    def generate_operation_name(route)
+      base = generate_path_helper_name(route[:path], route[:action])
+      "#{route[:action]}_#{base}"
     end
 
     # Internal: Generates a path helper-style name from route path and action
@@ -803,33 +842,98 @@ module TypeSpecFromSerializers
       nil
     end
 
+    # Internal: Extracts parameter types from controller *_params methods
+    def extract_param_types_from_controller(controller_class, action)
+      param_types = {}
+
+      # Extract from *_params methods with type DSL declarations
+      # Include private methods since *_params methods are typically private
+      param_methods = (controller_class.instance_methods(false) | controller_class.private_instance_methods(false))
+        .select { |m| m.to_s.end_with?(config.param_method_suffix) }
+
+      param_methods.each do |method_name|
+        type_found = false
+
+        # Check for type DSL declaration (same as serializer DSL)
+        if controller_class.respond_to?(:type_for_method)
+          type_definition = controller_class.type_for_method(method_name)
+          if type_definition.is_a?(Hash)
+            type_definition.each do |key, type_class|
+              key_str = key.to_s
+              # Only set if not already defined by route_params DSL
+              unless param_types.key?(key_str)
+                typespec_type = map_sorbet_type_to_typespec(type_class.to_s)
+                param_types[key_str] = typespec_type if typespec_type
+              end
+            end
+            type_found = true
+          end
+        end
+
+        # 3. Fall back to Sorbet signatures if no type DSL found
+        if !type_found && Sorbet.available?
+          method = controller_class.instance_method(method_name)
+          sig = T::Utils.signature_for_method(method) rescue nil
+          if sig&.return_type
+            # Extract hash type from return signature
+            hash_types = extract_hash_types_from_sorbet(sig.return_type)
+            # Only merge keys that aren't already defined
+            hash_types.each do |key, value|
+              param_types[key] = value unless param_types.key?(key)
+            end
+          end
+        end
+      end
+
+      param_types
+    rescue
+      {}
+    end
+
+    # Internal: Extracts key-value types from Sorbet hash type
+    def extract_hash_types_from_sorbet(sorbet_type)
+      param_types = {}
+
+      # Handle T::Hash[Symbol, Type] or plain Hash types
+      type_string = sorbet_type.to_s
+
+      # Match shaped hash: {key: Type, ...}
+      if type_string =~ /\{(.+)\}/
+        pairs = $1.scan(/(\w+):\s*([^,}]+)/)
+        pairs.each do |key, type|
+          typespec_type = map_sorbet_type_to_typespec(type.strip)
+          param_types[key] = typespec_type if typespec_type
+        end
+      end
+
+      param_types
+    end
+
+    # Internal: Maps Sorbet type strings to TypeSpec types using existing config
+    def map_sorbet_type_to_typespec(sorbet_type)
+      # Use existing config mapping
+      mapped = config.sorbet_to_typespec_type_mapping[sorbet_type]
+      return mapped.to_s if mapped
+
+      # Fallback to string for unknown types
+      "string"
+    end
+
+    # Internal: Maps Ruby type classes to TypeSpec types using existing config
+    def map_type_class_to_typespec(type_class)
+      type_str = type_class.to_s
+      mapped = config.sorbet_to_typespec_type_mapping[type_str]
+      return mapped.to_s if mapped
+
+      # Fallback to string for unknown types
+      "string"
+    end
+
     # Internal: Generates the routes.tsp content with resources
     def routes_content(routes)
-      imports = routes.flat_map { |r| r.operations.map(&:response_type) }.compact.uniq.map do |type|
-        base_type = (type || "unknown").split("[]").first.gsub("::", "")
-        next if base_type == "unknown"
-        relative_path = "./models/#{base_type}.tsp"
-        %(import "#{relative_path}";\n)
-      end.compact.uniq.join
-
-      resources = routes.map(&:as_typespec).join("\n").strip
-
-      routes_namespace = if config.namespace
-        # Wrap Routes in the same namespace as models
-        <<~TSP
-          namespace #{config.namespace} {
-            namespace Routes {
-              #{resources}
-            }
-          }
-        TSP
-      else
-        <<~TSP
-          namespace Routes {
-            #{resources}
-          }
-        TSP
-      end
+      imports = generate_route_imports(routes)
+      resources = routes.map { |r| r.as_typespec.strip }.join("\n\n")
+      routes_namespace = wrap_routes_in_namespace(resources)
 
       <<~TSP
         //
@@ -841,6 +945,45 @@ module TypeSpecFromSerializers
 
         #{routes_namespace.strip}
       TSP
+    end
+
+    # Internal: Generates import statements for route response types
+    def generate_route_imports(routes)
+      routes
+        .flat_map { |r| r.operations.map(&:response_type) }
+        .compact
+        .uniq
+        .map { |type| type.split("[]").first.delete(":") }
+        .reject { |type| type == "unknown" }
+        .uniq
+        .map { |type| %(import "./models/#{type}.tsp";\n) }
+        .join
+    end
+
+    # Internal: Wraps resources in namespace with proper indentation
+    def wrap_routes_in_namespace(resources)
+      if config.namespace
+        indented = indent_lines(resources, spaces: 4)
+        <<~TSP
+          namespace #{config.namespace} {
+            namespace Routes {
+          #{indented}
+            }
+          }
+        TSP
+      else
+        indented = indent_lines(resources, spaces: 2)
+        <<~TSP
+          namespace Routes {
+          #{indented}
+          }
+        TSP
+      end
+    end
+
+    # Internal: Indents each line and strips trailing whitespace
+    def indent_lines(text, spaces:)
+      text.lines.map { |line| "#{' ' * spaces}#{line}".rstrip + "\n" }.join.rstrip
     end
 
     def default_config(root)
@@ -943,6 +1086,9 @@ module TypeSpecFromSerializers
 
         # Filter routes to export (similar to js_from_routes)
         export_if: ->(route) { route.defaults.fetch(:export, nil) },
+
+        # Suffix for param methods to extract types from (e.g., video_params)
+        param_method_suffix: "_params",
       )
     end
 

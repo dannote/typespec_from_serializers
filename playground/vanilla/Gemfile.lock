@@ -4,6 +4,7 @@ PATH
     typespec_from_serializers (0.1.1)
       listen (~> 3.2)
       oj_serializers (~> 2.0, >= 2.0.2)
+      prism (>= 1.0.0)
       railties (>= 5.1)
       rbi (~> 0.3)
 

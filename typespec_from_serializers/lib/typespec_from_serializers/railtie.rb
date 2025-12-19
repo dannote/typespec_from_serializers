@@ -38,10 +38,14 @@ class TypeSpecFromSerializers::Railtie < Rails::Railtie
         require_relative "generator"
         start_time = Time.zone.now
         print "Generating TypeSpec descriptions..."
-        serializers = TypeSpecFromSerializers.generate(force: true)
+        result = TypeSpecFromSerializers.generate(force: true)
         puts "completed in #{(Time.zone.now - start_time).round(2)} seconds.\n"
-        puts "Found #{serializers.size} serializers:"
-        puts serializers.map { |s| "\t#{s.name}" }.join("\n")
+        puts "Found #{result[:serializers].size} serializers:"
+        puts result[:serializers].map { |s| "\t#{s.name}" }.join("\n")
+        if result[:controllers].any?
+          puts "\nFound #{result[:controllers].size} controllers:"
+          puts result[:controllers].map { |c| "\t#{c}" }.join("\n")
+        end
       end
 
       desc "Generates Sorbet RBI files for serializers"

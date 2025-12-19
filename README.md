@@ -148,13 +148,13 @@ And then run:
 
 ## Usage 🚀
 
-To get started, [create a `BaseSerializer`](https://github.com/dannote/typespec_from_serializers/blob/main/playground/vanilla/app/serializers/base_serializer.rb) that extends [`Oj::Serializer`][oj_serializers], and include the `TypeSpecFromSerializers::DSL` module.
+To get started, [create a `BaseSerializer`](https://github.com/dannote/typespec_from_serializers/blob/main/playground/vanilla/app/serializers/base_serializer.rb) that extends [`Oj::Serializer`][oj_serializers], and include the `TypeSpecFromSerializers::DSL::Serializer` module.
 
 ```ruby
 # app/serializers/base_serializer.rb
 
 class BaseSerializer < Oj::Serializer
-  include TypeSpecFromSerializers::DSL
+  include TypeSpecFromSerializers::DSL::Serializer
 end
 ```
 
@@ -442,20 +442,78 @@ namespace SampleApp {
     @route("/videos")
     interface Videos {
       @get videos(): Video[];
-      @post create_videos(@body body: Video): Video;
+      @post create_videos(title: string, published: boolean): Video;
       @get video(@path id: string): VideoWithComments;  // inferred from serializer
-      @patch update_video(@path id: string, @body body: Video): Video;
+      @patch update_video(@path id: string, title: string): Video;
     }
 
     @route("/videos/:video_id/comments")
     interface Comments {
       @get video_comments(@path video_id: string): Comment[];
-      @post create_video_comments(@path video_id: string, @body body: Comment): Comment;
-      @patch update_video_comment(@path video_id: string, @path id: string, @body body: Comment): Comment;
+      @post create_video_comments(@path video_id: string, content: string): Comment;
+      @patch update_video_comment(@path video_id: string, @path id: string, content: string): Comment;
     }
   }
 }
 ```
+
+#### Typing Request Parameters
+
+TypeSpec distinguishes between **path parameters** (in the URL) and **body parameters** (in the request payload). You declare each in the appropriate place:
+
+**Path Parameters (in routes.rb)**
+
+Path parameters like `:id`, `:slug` appear in the URL path. Declare their types in `routes.rb` using `type:`:
+
+```ruby
+# config/routes.rb
+defaults format: :json, export: true do
+  # Type path parameters where routes are defined
+  get 'videos/:id', to: 'videos#show', type: { id: Integer }
+
+  resources :articles, type: { id: Integer, slug: String }
+
+  # Nested routes - type each level's parameters
+  resources :videos, type: { id: Integer } do
+    resources :comments, type: { video_id: Integer, id: Integer }
+  end
+end
+```
+
+Generates:
+```typespec
+@get video(@path id: int32): Video;
+@get article(@path id: int32, @path slug: string): Article;
+@get video_comment(@path video_id: int32, @path id: int32): Comment;
+```
+
+**Body Parameters (in controllers)**
+
+Body parameters are sent in POST/PATCH request payloads. Declare their types in controllers using `type` before `*_params` methods:
+
+```ruby
+# app/controllers/videos_controller.rb
+class VideosController < ApplicationController
+  include TypeSpecFromSerializers::DSL::Controller
+
+  # Type the request body parameters
+  type title: String, published: TrueClass, duration: Integer
+  def video_params
+    params.require(:video).permit(:title, :published, :duration)
+  end
+
+  def create
+    @video = Video.create(video_params)
+  end
+end
+```
+
+Generates:
+```typespec
+@post create_videos(title: string, published: boolean, duration: int32): Video;
+```
+
+TypeSpec automatically infers that undecorated parameters are body parameters for POST/PUT/PATCH requests, and query parameters for GET requests. Path parameters are explicitly marked with `@path`.
 
 ## Configuration ⚙️
 
@@ -587,6 +645,52 @@ You can provide a proc to transform property names.
 
 This library assumes that you will transform the casing client-side, but you can
 generate types preserving case by using `config.transform_keys = ->(key) { key }`.
+
+### `export_if`
+
+_Default:_ `->(route) { route.defaults[:export] }`
+
+Controls which routes are included in the generated `routes.tsp` file. By default, only routes with `export: true` are included.
+
+```ruby
+# Export all routes
+config.export_if = ->(route) { true }
+
+# Export routes for specific controllers
+config.export_if = ->(route) {
+  route.defaults[:controller]&.start_with?('api/')
+}
+```
+
+### `param_method_suffix`
+
+_Default:_ `"_params"`
+
+Specifies the suffix for controller methods that define request parameters. The generator looks for methods ending with this suffix (e.g., `video_params`, `article_params`) to extract body parameter types.
+
+```ruby
+# Use a different suffix
+config.param_method_suffix = "_parameters"
+```
+
+### `action_to_operation_mapping`
+
+_Default:_ `{}`
+
+Maps Rails action names to custom operation names in the generated TypeSpec routes.
+
+```ruby
+# Customize operation names
+config.action_to_operation_mapping = {
+  "index" => "list",
+  "show" => "read",
+  "create" => "create",
+  "update" => "update",
+  "destroy" => "delete",
+}
+```
+
+This generates operations like `@get list()` instead of `@get index()`.
 
 ## Contact ✉️
 

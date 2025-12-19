@@ -411,8 +411,8 @@ describe "Generator" do
         content = routes_file.read
 
         # Should have @get decorators for index and show actions
-        expect(content).to include("@get list()")
-        expect(content).to include("@get read(@path id: string)")
+        expect(content).to include("@get composers()")
+        expect(content).to include("@get composer(@path id: string)")
       end
 
       it "prefers PATCH over PUT for update actions" do
@@ -467,10 +467,10 @@ describe "Generator" do
 
         content = routes_file.read
 
-        # Each resource should have both list and read operations
+        # Each resource should have both index and show operations
         composers_section = content[/interface Composers.*?}/m]
-        expect(composers_section).to include("list()")
-        expect(composers_section).to include("read(@path id: string)")
+        expect(composers_section).to include("composers()")
+        expect(composers_section).to include("composer(@path id: string)")
       end
     end
 
@@ -479,21 +479,21 @@ describe "Generator" do
         content = routes_file.read
 
         # Show actions should have id parameter
-        expect(content).to include("read(@path id: string)")
+        expect(content).to include("composer(@path id: string)")
       end
 
       it "generates array response types for index actions" do
         content = routes_file.read
 
         # Index actions should return arrays
-        expect(content).to match(/list\(\): \w+\[\]/)
+        expect(content).to match(/composers\(\): \w+\[\]/)
       end
 
       it "generates single object response types for show actions" do
         content = routes_file.read
 
         # Show actions should return single objects
-        expect(content).to match(/read\(@path id: string\): \w+;/)
+        expect(content).to match(/composer\(@path id: string\): \w+;/)
       end
     end
 
@@ -512,6 +512,118 @@ describe "Generator" do
         # Should have imports for used types with models/ prefix
         # Check for at least one of the main resource imports
         expect(content).to match(/import "\.\/models\/Composer\.tsp"|import "\.\/models\/Song\.tsp"|import "\.\/models\/Video\.tsp"/)
+      end
+    end
+  end
+
+  describe "route parameter type extraction" do
+    before do
+      # Include controller DSL for type declarations
+      ApplicationController.send(:include, TypeSpecFromSerializers::DSL::Controller)
+    end
+
+    context "with route metadata param_types" do
+      it "maps type classes to TypeSpec types" do
+        result = TypeSpecFromSerializers.send(:map_type_class_to_typespec, Integer)
+        expect(result).to eq("int32")
+
+        result = TypeSpecFromSerializers.send(:map_type_class_to_typespec, String)
+        expect(result).to eq("string")
+
+        result = TypeSpecFromSerializers.send(:map_type_class_to_typespec, DateTime)
+        expect(result).to eq("utcDateTime")
+      end
+
+      it "falls back to string for unknown types" do
+        result = TypeSpecFromSerializers.send(:map_type_class_to_typespec, Object)
+        expect(result).to eq("string")
+      end
+    end
+
+    context "with type DSL on params methods" do
+      after do
+        # Reset config after each test
+        TypeSpecFromSerializers.config do |config|
+          config.param_method_suffix = "_params"
+        end
+      end
+
+      it "extracts types from type DSL declarations" do
+        # Create a test controller with type DSL
+        test_controller = Class.new(ApplicationController) do
+          type id: Integer, title: String
+          def video_params
+            {id: params[:id].to_i, title: params[:title].to_s}
+          end
+        end
+        stub_const("TestController", test_controller)
+
+        param_types = TypeSpecFromSerializers.send(:extract_param_types_from_controller, TestController, "show")
+
+        expect(param_types["id"]).to eq("int32")
+        expect(param_types["title"]).to eq("string")
+      end
+
+      it "uses configurable param_method_suffix" do
+        TypeSpecFromSerializers.config do |config|
+          config.param_method_suffix = "_parameters"
+        end
+
+        test_controller = Class.new(ApplicationController) do
+          type id: Integer
+          def video_parameters
+            {id: params[:id].to_i}
+          end
+        end
+        stub_const("TestController", test_controller)
+
+        param_types = TypeSpecFromSerializers.send(:extract_param_types_from_controller, TestController, "show")
+
+        expect(param_types["id"]).to eq("int32")
+      end
+
+      it "returns empty hash when no type DSL used and Sorbet unavailable" do
+        # Create a test controller with no type annotations
+        test_controller = Class.new(ApplicationController) do
+          def video_params
+            {id: params[:id].to_i, name: params[:name].to_s}
+          end
+        end
+        stub_const("TestController", test_controller)
+
+        param_types = TypeSpecFromSerializers.send(:extract_param_types_from_controller, TestController, "show")
+
+        # Should return empty since no types declared
+        expect(param_types).to eq({})
+      end
+    end
+
+    context "priority and fallback" do
+      it "handles multiple param methods" do
+        test_controller = Class.new(ApplicationController) do
+          type id: Integer
+          def video_params
+            {id: params[:id].to_i}
+          end
+
+          type slug: String
+          def article_params
+            {slug: params[:slug].to_s}
+          end
+        end
+        stub_const("TestController", test_controller)
+
+        param_types = TypeSpecFromSerializers.send(:extract_param_types_from_controller, TestController, "show")
+
+        # Should extract from both methods
+        expect(param_types["id"]).to eq("int32")
+        expect(param_types["slug"]).to eq("string")
+      end
+
+      it "returns empty hash when extraction fails" do
+        param_types = TypeSpecFromSerializers.send(:extract_param_types_from_controller, nil, "show")
+
+        expect(param_types).to eq({})
       end
     end
   end

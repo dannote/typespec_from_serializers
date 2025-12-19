@@ -6,7 +6,7 @@ describe "Type DSL" do
   before do
     # Define a test serializer with type DSL
     stub_const("TypeDslTestSerializer", Class.new do
-      include TypeSpecFromSerializers::DSL
+      include TypeSpecFromSerializers::DSL::Serializer
 
       type String
       def full_name
