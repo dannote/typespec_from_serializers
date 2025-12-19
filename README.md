@@ -444,14 +444,21 @@ For example:
 # config/routes.rb
 defaults format: :json, export: true do
   resources :videos do
-    resources :comments, only: [:index, :create, :update]
+    member do
+      post :publish
+    end
+    collection do
+      post :search
+    end
+    resources :comments, only: [:index, :create, :update, :destroy]
   end
 end
 
 # app/controllers/videos_controller.rb
 class VideosController < ApplicationController
   def show
-    VideoWithCommentsSerializer.one(Video.find(params[:id]))
+    video = Video.find(params[:id])
+    render json: VideoWithCommentsSerializer.one(video)
   end
 end
 ```
@@ -459,21 +466,38 @@ end
 Generates:
 
 ```typespec
+import "@typespec/http";
+
+import "./models/Video.tsp";
+import "./models/VideoWithComments.tsp";
+import "./models/Comment.tsp";
+
+using TypeSpec.Http;
+
+@service(#{
+  title: "SampleApp API",
+})
 namespace SampleApp {
   namespace Routes {
     @route("/videos")
     interface Videos {
-      @get videos(): Video[];
-      @post create_videos(title: string, published: boolean): Video;
-      @get video(@path id: string): VideoWithComments;  // inferred from serializer
-      @patch update_video(@path id: string, title: string): Video;
+      @get index_videos(): Video[];
+      @post create_videos(): Video;
+      @get video(@path id: string): VideoWithComments;
+      @patch update_video(@path id: string): Video;
+      @delete destroy_video(@path id: string): Video;
+      @route("/{id}/publish")
+      @post publish_video(@path id: string): Video;
+      @route("/search")
+      @post search_videos(): Video[];
     }
 
-    @route("/videos/:video_id/comments")
+    @route("/videos/{video_id}/comments")
     interface Comments {
       @get video_comments(@path video_id: string): Comment[];
-      @post create_video_comments(@path video_id: string, content: string): Comment;
-      @patch update_video_comment(@path video_id: string, @path id: string, content: string): Comment;
+      @post create_video_comments(@path video_id: string): Comment;
+      @patch update_video_comment(@path video_id: string, @path id: string): Comment;
+      @delete destroy_video_comment(@path video_id: string, @path id: string): Comment;
     }
   }
 }
@@ -525,7 +549,8 @@ class VideosController < ApplicationController
   end
 
   def create
-    @video = Video.create(video_params)
+    video = Video.create(video_params)
+    render json: VideoSerializer.one(video)
   end
 end
 ```

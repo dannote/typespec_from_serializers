@@ -20,6 +20,11 @@ module TypeSpecFromSerializers
     Model Scalar Enum Union Interface Operation Namespace
   ].to_set.freeze
 
+  # Rails RESTful resource action names
+  REST_ACTIONS = %w[index show create update destroy].freeze
+  MEMBER_ACTIONS = %w[show update destroy].freeze
+  SPECIAL_ACTIONS = %w[new edit].freeze
+
   # Internal: Extensions that simplify the implementation of the generator.
   module SerializerRefinements
     refine String do
@@ -328,7 +333,7 @@ module TypeSpecFromSerializers
   # Internal: Represents a TypeSpec resource interface
   Resource = Struct.new(:name, :path, :operations, keyword_init: true) do
     def as_typespec
-      operations_str = operations.map { |op| "  #{op.as_typespec}" }.join("\n")
+      operations_str = operations.map { |op| "  #{op.as_typespec(resource_path: path)}" }.join("\n")
       <<~TSP
         @route("#{path}")
         interface #{name} {
@@ -339,22 +344,43 @@ module TypeSpecFromSerializers
   end
 
   # Internal: Represents a TypeSpec operation within a resource
-  Operation = Struct.new(:method, :action, :path_params, :body_params, :response_type, keyword_init: true) do
-    HTTP_METHOD_MAP = {
-      "GET" => "get", "POST" => "post", "PUT" => "put",
-      "PATCH" => "patch", "DELETE" => "delete",
-    }.freeze
-
-    def as_typespec
-      tsp_method = HTTP_METHOD_MAP[method] || method.downcase
+  Operation = Struct.new(:method, :action, :path, :path_params, :body_params, :response_type, keyword_init: true) do
+    def as_typespec(resource_path: nil)
+      tsp_method = method.downcase
       operation_name = TypeSpecFromSerializers.config.action_to_operation_mapping[action] || action
       params = params_typespec
       params_str = params.empty? ? "()" : "(#{params})"
 
-      "@#{tsp_method} #{operation_name}#{params_str}: #{response_type.delete(":")};"
+      # Add @route decorator if operation path differs from resource base path
+      route_decorator = operation_route_decorator(resource_path)
+      route_line = route_decorator ? "#{route_decorator}\n  " : ""
+
+      "#{route_line}@#{tsp_method} #{operation_name}#{params_str}: #{response_type.delete(":")};"
     end
 
     private
+
+    def operation_route_decorator(resource_path)
+      return unless resource_path && path
+
+      op_path_tsp = path.gsub(/:(\w+)/, '{\1}')
+      standard_path = build_standard_path(resource_path)
+
+      return if op_path_tsp == standard_path
+
+      relative_path = op_path_tsp.delete_prefix(resource_path).then do |rel|
+        rel.start_with?("/") ? rel : "/#{rel}"
+      end
+
+      %(@route("#{relative_path}")) if op_path_tsp.start_with?(resource_path)
+    end
+
+    def build_standard_path(resource_path)
+      return resource_path if path_params.empty?
+
+      param_names = path_params.map { |p| p.is_a?(Hash) ? p[:name] : p }
+      "#{resource_path}/#{param_names.map { |p| "{#{p}}" }.join("/")}"
+    end
 
     def params_typespec
       [*format_path_params, *format_body_params].join(", ")
@@ -362,13 +388,13 @@ module TypeSpecFromSerializers
 
     def format_path_params
       path_params.map do |param|
-        param.is_a?(Hash) ? "@path #{param[:name]}: #{param[:type]}" : "@path #{param}: string"
+        name, type = param.is_a?(Hash) ? [param[:name], param[:type]] : [param, "string"]
+        "@path #{name}: #{type}"
       end
     end
 
     def format_body_params
-      return [] unless body_params&.any?
-      body_params.map { |name, type| "#{name}: #{type}" }
+      body_params&.map { |name, type| "#{name}: #{type}" } || []
     end
   end
 
@@ -580,21 +606,25 @@ module TypeSpecFromSerializers
         # Use Rails-generated route name for unique operation naming
         route_name = route.name
 
-        unless hash[controller].any? { |r| r[:method] == method && r[:action] == action && r[:path] == path }
-          hash[controller] << {
-            method: method,
-            action: action,
-            path: path,
-            response_type: response_type,
-            route_name: route_name,
-            param_types: route.defaults[:type] || {},
-          }
+        # Prefer standard REST actions over custom actions for duplicate routes
+        if existing = hash[controller].find { |r| r[:method] == method && r[:path] == path }
+          next unless action.in?(REST_ACTIONS) && !existing[:action].in?(REST_ACTIONS)
+          hash[controller].delete(existing)
         end
+
+        hash[controller] << {
+          method: method,
+          action: action,
+          path: path,
+          response_type: response_type,
+          route_name: route_name,
+          param_types: route.defaults[:type] || {},
+        }
       end
 
       routes_by_controller.map do |controller, routes|
-        path_segments = routes.map { |r| r[:path].split("/")[1..-1] || [] }.uniq.sort_by(&:length)
-        base_path = path_segments.any? ? path_segments.first.join("/")&.split("/{")&.first || controller : controller
+        paths = routes.map { |r| r[:path] }.uniq
+        base_path = calculate_base_path(paths, controller)
 
         operations = routes.map do |route|
           path_param_names = route[:path].scan(/:([a-zA-Z_][a-zA-Z0-9_]*)/).flatten
@@ -603,6 +633,7 @@ module TypeSpecFromSerializers
           Operation.new(
             method: route[:method],
             action: route[:route_name] || generate_operation_name(route),
+            path: route[:path],
             path_params: build_path_params(path_param_names, param_types),
             body_params: build_body_params(route[:method], path_param_names, param_types),
             response_type: infer_operation_response_type(route),
@@ -611,7 +642,7 @@ module TypeSpecFromSerializers
 
         Resource.new(
           name: controller.tr("/", "_").camelize,
-          path: "/#{base_path}",
+          path: base_path.start_with?("/") ? base_path : "/#{base_path}",
           operations: operations,
         )
       end
@@ -624,17 +655,30 @@ module TypeSpecFromSerializers
         .transform_values { |v| map_type_class_to_typespec(v) }
 
       controller_class = "#{controller.camelize}Controller".safe_constantize
-      controller_param_types = controller_class ?
-        extract_param_types_from_controller(controller_class, route[:action]) : {}
+      controller_param_types = controller_class&.then { |klass|
+        extract_param_types_from_controller(klass, route[:action])
+      } || {}
 
       controller_param_types.merge(route_param_types)
     end
 
+    # Internal: Calculates base path from route paths
+    def calculate_base_path(paths, controller)
+      return paths.first.split(/[{:]/).first if paths.one?
+
+      common = paths.first.split("/")
+      paths.each do |path|
+        common = common.zip(path.split("/")).take_while do |(seg, other)|
+          seg == other && !seg&.match?(/^[{:]/)
+        end.map(&:first)
+      end
+
+      common.empty? ? controller : common.join("/")
+    end
+
     # Internal: Builds typed path parameters with defaults
     def build_path_params(param_names, param_types)
-      param_names.map do |name|
-        param_types[name] ? {name: name, type: param_types[name]} : {name: name, type: "string"}
-      end
+      param_names.map { |name| {name: name, type: param_types[name] || "string"} }
     end
 
     # Internal: Builds body parameters (excludes path params, only for non-GET)
@@ -645,8 +689,9 @@ module TypeSpecFromSerializers
 
     # Internal: Infers operation response type from route
     def infer_operation_response_type(route)
-      return "unknown" if route[:response_type] == route[:action]
-      route[:action] == "index" ? "#{route[:response_type]}[]" : route[:response_type]
+      type = route[:response_type]
+      return "unknown" if type == route[:action]
+      route[:action] == "index" ? "#{type}[]" : type
     end
 
     # Internal: Generates operation name from route path and action
@@ -656,34 +701,23 @@ module TypeSpecFromSerializers
     end
 
     # Internal: Generates a path helper-style name from route path and action
-    # Mimics Rails' path helper naming convention
     def generate_path_helper_name(path, action)
-      # Extract path segments, removing params
-      segments = path.split("/").reject { |s| s.empty? || s.start_with?("{", ":") }
+      segments = path.split("/").reject { |s| s.empty? || s.match?(/^[{:]/) }
 
-      # Build name from segments: /lands/:land_id/comments → land_comments
-      # Singularize parent resources (all segments except the last)
-      # For member actions, also singularize the last segment
-      if action.in?(%w[show update destroy])
-        # Member action: singularize all segments
-        base = segments.map(&:singularize).join("_")
+      base = if action.in?(MEMBER_ACTIONS)
+        segments.map(&:singularize).join("_")
       else
-        # Collection action: singularize parent segments, keep last plural
-        base = segments.map.with_index { |s, i| i < segments.size - 1 ? s.singularize : s }.join("_")
+        segments.map.with_index { |s, i| i < segments.size - 1 ? s.singularize : s }.join("_")
       end
 
-      # Add action prefix for special actions (new, edit)
-      base = "#{action}_#{base}" if action.in?(%w[new edit])
-
+      base = "#{action}_#{base}" if action.in?(SPECIAL_ACTIONS)
       base.presence || action
     end
 
     # Internal: Extracts namespace from route export config or falls back to controller
-    # (based on js_from_routes pattern)
     def namespace_for_route(route)
-      if (export = route.defaults[:export]).is_a?(Hash)
-        export[:namespace]
-      end || route.defaults[:controller]
+      export = route.defaults[:export]
+      (export[:namespace] if export.is_a?(Hash)) || route.defaults[:controller]
     end
 
     # Internal: Infers the response type based on controller and action
@@ -970,9 +1004,13 @@ module TypeSpecFromSerializers
 
     # Internal: Wraps resources in namespace with proper indentation
     def wrap_routes_in_namespace(resources)
+      title = config.namespace ? "#{config.namespace} API" : "API"
+      service_decorator = %(@service(\#{\n  title: "#{title}",\n}))
+
       if config.namespace
         indented = indent_lines(resources, spaces: 4)
         <<~TSP
+          #{service_decorator}
           namespace #{config.namespace} {
             namespace Routes {
           #{indented}
@@ -982,6 +1020,7 @@ module TypeSpecFromSerializers
       else
         indented = indent_lines(resources, spaces: 2)
         <<~TSP
+          #{service_decorator}
           namespace Routes {
           #{indented}
           }
@@ -1060,14 +1099,8 @@ module TypeSpecFromSerializers
           uuid: :string,
         },
 
-        # Map Rails actions to TypeSpec operations
-        action_to_operation_mapping: {
-          "index" => "list",
-          "show" => "read",
-          "create" => "create",
-          "update" => "update",
-          "destroy" => "delete",
-        },
+        # Map Rails actions to TypeSpec operations (only include mappings that differ)
+        action_to_operation_mapping: {},
 
         # Maps Sorbet types to TypeSpec types (optional Sorbet integration)
         sorbet_to_typespec_type_mapping: {
