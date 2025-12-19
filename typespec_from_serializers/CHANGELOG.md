@@ -1,5 +1,11 @@
 # TypeSpec From Serializers Changelog
 
+## [0.2.1] - 2025-12-19
+
+### Fixed
+- Correct `@service` decorator syntax to use `#{}` for object literals
+- Add newline after `@service` decorator for better readability
+
 ## [0.2.0] - 2025-12-19
 
 Initial release - fork of `types_from_serializers` adapted to generate TypeSpec instead of TypeScript.

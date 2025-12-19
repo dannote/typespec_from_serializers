@@ -1133,6 +1133,7 @@ module TypeSpecFromSerializers
         indented = indent_lines(resources, spaces: 4)
         <<~TSP
           #{service_decorator}
+
           namespace #{config.namespace} {
             namespace Routes {
           #{indented}
@@ -1143,6 +1144,7 @@ module TypeSpecFromSerializers
         indented = indent_lines(resources, spaces: 2)
         <<~TSP
           #{service_decorator}
+
           namespace Routes {
           #{indented}
           }
