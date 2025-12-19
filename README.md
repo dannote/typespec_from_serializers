@@ -420,7 +420,9 @@ For example:
 
 ```ruby
 # config/routes.rb
-resources :videos, only: [:index, :show]
+defaults format: :json, export: true do
+  resources :videos, only: [:index, :show]
+end
 
 # app/controllers/videos_controller.rb
 class VideosController < ApplicationController
@@ -437,8 +439,8 @@ namespace SampleApp {
   namespace Routes {
     @route("/videos")
     interface Videos {
-      @get list(): Video[];
-      @get read(@path id: string): VideoWithComments;  // inferred from serializer
+      @get videos(): Video[];
+      @get video(@path id: string): VideoWithComments;  // inferred from serializer
     }
   }
 }

@@ -66,7 +66,9 @@ module TypeSpecFromSerializers
 
       # Internal: The TypeSpec properties of the serialzeir model.
       def tsp_properties
-        @tsp_properties ||= begin
+        return @tsp_properties if @tsp_properties
+
+        @tsp_properties = begin
           model_class = _serializer_model_name&.to_model
           model_columns = model_class.try(:columns_hash) || {}
           model_enums = model_class.try(:defined_enums) || {}
@@ -153,17 +155,44 @@ module TypeSpecFromSerializers
       serializer_type_imports = association_serializers.map(&:tsp_model)
         .map { |type| [type.name, relative_path(type.pathname, pathname)] }
 
-      custom_type_imports = attribute_types
-        .flat_map { |type| type.to_s.split(".").first }
+      # Extract type names from attribute types (strings like "Task[]" or "string | null")
+      type_names = attribute_types
+        .flat_map { |type|
+          # Extract base type name, removing array notation and taking first part of unions
+          type.to_s.delete_suffix("[]").split(/\s*[|.]\s*/)
+        }
         .uniq
         .reject { |type| global_type?(type) }
-        .map { |type|
-          type_path = TypeSpecFromSerializers.config.relative_custom_typespec_dir.join(type)
-          [type, relative_path(type_path, pathname)]
-        }
 
-      (custom_type_imports + serializer_type_imports)
+      # Partition into serializer models vs custom types
+      serializer_models, custom_types = type_names.partition { |type_name|
+        serializer_model_exists?(type_name)
+      }
+
+      # Import serializer models from models/ directory
+      serializer_model_imports = serializer_models.map { |type_name|
+        # Find the serializer that generates this model
+        serializer = TypeSpecFromSerializers.loaded_serializers.find { |ser| ser.tsp_model.name == type_name }
+        next unless serializer
+
+        [type_name, relative_path(serializer.tsp_model.pathname, pathname)]
+      }.compact
+
+      # Import custom types from custom directory
+      custom_type_imports = custom_types.map { |type|
+        type_path = TypeSpecFromSerializers.config.relative_custom_typespec_dir.join(type)
+        [type, relative_path(type_path, pathname)]
+      }
+
+      (custom_type_imports + serializer_type_imports + serializer_model_imports)
         .map { |model, filename| %(import "#{filename}.tsp";\n) }
+    end
+
+    def serializer_model_exists?(type_name)
+      # Check if any loaded serializer generates a model with this name
+      TypeSpecFromSerializers.loaded_serializers.any? { |ser| ser.tsp_model.name == type_name }
+    rescue
+      false
     end
 
     def as_typespec
@@ -264,8 +293,12 @@ module TypeSpecFromSerializers
     def as_typespec
       type_str = if type.respond_to?(:tsp_name)
         type.tsp_name
+      elsif type
+        # Map common type symbols/strings through the Sorbet mapping
+        mapped = TypeSpecFromSerializers.config.sorbet_to_typespec_type_mapping[type.to_s]
+        mapped || type
       else
-        type || TypeSpecFromSerializers.config.unknown_type
+        TypeSpecFromSerializers.config.unknown_type
       end
 
       escaped_name = escape_field_name(name)
@@ -416,6 +449,10 @@ module TypeSpecFromSerializers
       write_if_changed(filename: "models/#{model.filename}", cache_key: model.inspect, extension: "tsp") {
         serializer_model_content(model)
       }
+    rescue => e
+      $stderr.puts "ERROR in generate_model_for(#{serializer.name}): #{e.class}: #{e.message}"
+      $stderr.puts e.backtrace.first(10).join("\n")
+      raise
     end
 
     # Internal: Allows to import all serializer types from a single file.
@@ -470,6 +507,20 @@ module TypeSpecFromSerializers
       root.join("sorbet/rbi")
     end
 
+    # Public: Returns all loaded serializer classes.
+    #
+    # Returns Array of serializer classes
+    def loaded_serializers
+      config.base_serializers.map(&:constantize)
+        .flat_map(&:descendants)
+        .uniq
+        .reject { |s| s.name.nil? } # Filter out anonymous classes
+        .sort_by(&:name)
+        .reject { |s| skip_serializer?(s) }
+    rescue NameError
+      raise ArgumentError, "Please ensure all your serializers extend BaseSerializer, or configure `config.base_serializers`."
+    end
+
   private
 
     def changes
@@ -482,17 +533,6 @@ module TypeSpecFromSerializers
 
     def load_serializers(files)
       files.each { |file| require file }
-    end
-
-    def loaded_serializers
-      config.base_serializers.map(&:constantize)
-        .flat_map(&:descendants)
-        .uniq
-        .reject { |s| s.name.nil? } # Filter out anonymous classes
-        .sort_by(&:name)
-        .reject { |s| skip_serializer?(s) }
-    rescue NameError
-      raise ArgumentError, "Please ensure all your serializers extend BaseSerializer, or configure `config.base_serializers`."
     end
 
     # Internal: Collects routes from Rails and groups them into resources
@@ -515,12 +555,16 @@ module TypeSpecFromSerializers
         # Reject duplicate PUT routes when PATCH exists for update action (js_from_routes pattern)
         next if action == "update" && method == "PUT" && hash[controller].any? { |r| r[:action] == "update" && r[:method] == "PATCH" }
 
+        # Use Rails-generated route name for unique operation naming
+        route_name = route.name
+
         unless hash[controller].any? { |r| r[:method] == method && r[:action] == action && r[:path] == path }
           hash[controller] << {
             method: method,
             action: action,
             path: path,
             response_type: response_type,
+            route_name: route_name,
           }
         end
       end
@@ -536,19 +580,47 @@ module TypeSpecFromSerializers
           else
             (route[:action] == "index") ? "#{route[:response_type]}[]" : route[:response_type]
           end
+
+          # Use Rails route name if available, otherwise generate like Rails path helpers
+          operation_name = route[:route_name] || generate_path_helper_name(route[:path], route[:action])
+
           Operation.new(
             method: route[:method],
-            action: route[:action],
+            action: operation_name,
             path_params: (route[:action] == "show") ? ["id"] : path_params,
             response_type: response_type,
           )
         end
+
         Resource.new(
           name: controller.tr("/", "_").camelize,
           path: "/#{base_path}",
           operations: operations,
         )
       end
+    end
+
+    # Internal: Generates a path helper-style name from route path and action
+    # Mimics Rails' path helper naming convention
+    def generate_path_helper_name(path, action)
+      # Extract path segments, removing params
+      segments = path.split("/").reject { |s| s.empty? || s.start_with?("{", ":") }
+
+      # Build name from segments: /lands/:land_id/comments → land_comments
+      # For member actions (show, update, destroy), use singular form
+      # For collection actions (index, create), use plural form
+      if action.in?(%w[show update destroy])
+        # Member action: use singular of last segment
+        base = segments.map.with_index { |s, i| i == segments.size - 1 ? s.singularize : s }.join("_")
+      else
+        # Collection action: use plural form
+        base = segments.join("_")
+      end
+
+      # Add action prefix for special actions (new, edit)
+      base = "#{action}_#{base}" if action.in?(%w[new edit])
+
+      base.presence || action
     end
 
     # Internal: Extracts namespace from route export config or falls back to controller
@@ -850,6 +922,8 @@ module TypeSpecFromSerializers
           "DateTime" => :utcDateTime,
           "Time" => :utcDateTime,
           "Symbol" => :string,
+          "number" => :float64, # Common alias for numeric types
+          "object" => "Record<unknown>", # Deprecated 'object' type in TypeSpec
         },
 
         # Allows to transform keys, useful when converting objects client-side.
