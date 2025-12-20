@@ -1,5 +1,12 @@
 # TypeSpec From Serializers Changelog
 
+## [0.3.0] - 2025-12-20
+
+### Features
+- Extract RDoc comments from serializers and controllers to generate `@doc` decorators
+- New `extract_docs` config option (enabled by default) to control documentation extraction
+- Requires RDoc 7.0+ for Prism-based parser support
+
 ## [0.2.1] - 2025-12-19
 
 ### Fixed

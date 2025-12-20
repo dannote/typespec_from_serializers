@@ -5,5 +5,7 @@ Rails.application.routes.draw do
     resources :composers, only: %i[index show], export: true
     resources :songs, only: %i[index show], export: true
     resources :videos, only: %i[index show], export: true
+    # :nodoc:
+    get :health, to: "health#show"
   end
 end

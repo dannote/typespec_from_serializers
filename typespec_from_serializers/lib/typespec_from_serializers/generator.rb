@@ -3,6 +3,7 @@
 require "digest"
 require "fileutils"
 require "pathname"
+require "typespec_from_serializers/rdoc"
 
 # Public: Automatically generates TypeSpec descriptions for Ruby serializers and Rails routes.
 module TypeSpecFromSerializers
@@ -93,6 +94,7 @@ module TypeSpecFromSerializers
                   optional: options[:optional] || options.key?(:if),
                   multi: options[:association] == :many,
                   column_name: options.fetch(:value_from),
+                  doc: TypeSpecFromSerializers.config.extract_docs ? RDoc.method_doc(self, options.fetch(:value_from)) : nil,
                 ).tap do |property|
                   property.infer_typespec_from(model_columns, model_enums, typespec_from, self, model_class)
                 end
@@ -107,6 +109,7 @@ module TypeSpecFromSerializers
           name: tsp_name,
           filename: tsp_filename,
           properties: tsp_properties,
+          doc: TypeSpecFromSerializers.config.extract_docs ? RDoc.class_doc(self) : nil,
         )
       end
     end
@@ -134,6 +137,7 @@ module TypeSpecFromSerializers
     :package_manager,
     :openapi_path,
     :max_line_length,
+    :extract_docs,
     :root,
     keyword_init: true,
   ) do
@@ -151,6 +155,7 @@ module TypeSpecFromSerializers
     :name,
     :filename,
     :properties,
+    :doc,
     keyword_init: true,
   ) do
     using SerializerRefinements
@@ -209,11 +214,18 @@ module TypeSpecFromSerializers
 
     def as_typespec
       indent = TypeSpecFromSerializers.config.namespace ? 2 : 1
+      doc_decorator = doc ? "@doc(\"#{escape_doc(doc)}\")\n#{"  " * (indent - 1)}" : ""
       <<~TSP.gsub(/\n$/, "")
-        model #{name} {
+        #{doc_decorator}model #{name} {
         #{"  " * indent}#{properties.index_by(&:name).values.map(&:as_typespec).join("\n#{"  " * indent}")}
         #{"  " * (indent - 1)}}
       TSP
+    end
+
+  private
+
+    def escape_doc(str)
+      str.gsub('\\', '\\\\').gsub('"', '\\"').gsub("\n", "\\n")
     end
 
   protected
@@ -242,6 +254,7 @@ module TypeSpecFromSerializers
     :optional,
     :multi,
     :column_name,
+    :doc,
     keyword_init: true,
   ) do
     using SerializerRefinements
@@ -314,10 +327,15 @@ module TypeSpecFromSerializers
       end
 
       escaped_name = escape_field_name(name)
-      "#{escaped_name}#{"?" if optional}: #{type_str}#{"[]" if multi};"
+      field_line = "#{escaped_name}#{"?" if optional}: #{type_str}#{"[]" if multi};"
+      doc ? "@doc(\"#{escape_doc(doc)}\")\n  #{field_line}" : field_line
     end
 
   private
+
+    def escape_doc(str)
+      str.gsub('\\', '\\\\').gsub('"', '\\"').gsub("\n", "\\n")
+    end
 
     def escape_field_name(field_name)
       # Escape field names that conflict with TypeSpec keywords using backticks
@@ -361,21 +379,26 @@ module TypeSpecFromSerializers
   end
 
   # Internal: Represents a TypeSpec operation within a resource
-  Operation = Struct.new(:method, :action, :path, :path_params, :body_params, :response_type, keyword_init: true) do
+  Operation = Struct.new(:method, :action, :path, :path_params, :body_params, :response_type, :doc, keyword_init: true) do
     def as_typespec(resource_path: nil)
       tsp_method = method.downcase
       operation_name = TypeSpecFromSerializers.config.action_to_operation_mapping[action] || action
       route_line = build_route_decorator(resource_path)
+      doc_line = doc ? "@doc(\"#{escape_doc(doc)}\")\n  " : ""
 
       # Check if we need multiline formatting
       single_line = build_single_line(tsp_method, operation_name)
 
       too_long_for_single_line?(single_line) ?
-        multiline_format(route_line, tsp_method, operation_name) :
-        "#{route_line}#{single_line}"
+        "#{doc_line}#{multiline_format(route_line, tsp_method, operation_name)}" :
+        "#{doc_line}#{route_line}#{single_line}"
     end
 
     private
+
+    def escape_doc(str)
+      str.gsub('\\', '\\\\').gsub('"', '\\"').gsub("\n", "\\n")
+    end
 
     def build_route_decorator(resource_path)
       decorator = operation_route_decorator(resource_path)
@@ -698,6 +721,7 @@ module TypeSpecFromSerializers
     def build_operation(controller, route)
       path_param_names = route[:path].scan(/:([a-zA-Z_][a-zA-Z0-9_]*)/).flatten
       param_types = extract_all_param_types(controller, route)
+      controller_class = "#{controller.camelize}#{config.controller_suffix}".safe_constantize
 
       Operation.new(
         method: route[:method],
@@ -706,6 +730,7 @@ module TypeSpecFromSerializers
         path_params: build_path_params(path_param_names, param_types),
         body_params: build_body_params(route[:method], path_param_names, param_types),
         response_type: infer_operation_response_type(route),
+        doc: config.extract_docs && controller_class ? RDoc.method_doc(controller_class, route[:action]) : nil,
       )
     end
 
@@ -1266,6 +1291,9 @@ module TypeSpecFromSerializers
 
         # Maximum line length before switching to multiline format for operations
         max_line_length: 100,
+
+        # Extract documentation from RDoc comments
+        extract_docs: true,
 
         # Project root directory
         root: root,

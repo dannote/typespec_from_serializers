@@ -1,3 +1,4 @@
+# Represents a video clip in the music catalog.
 class VideoSerializer < BaseSerializer
   object_as :video_clip
 
@@ -12,4 +13,5 @@ class VideoSerializer < BaseSerializer
 
   attribute :untyped_field_example do
   end
+
 end

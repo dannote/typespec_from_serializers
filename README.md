@@ -62,6 +62,7 @@ and marks them as optional: `name?: string`
 - Generates TypeSpec route interfaces from Rails routes, mapping controllers and actions to HTTP operations
 - **Namespace support** with automatic reserved keyword handling - uses your Rails app name as namespace by default, avoiding conflicts with TypeSpec keywords
 - **Smart field name escaping** - automatically escapes field names that conflict with TypeSpec keywords using backticks
+- **Documentation extraction** - generates `@doc` decorators from RDoc comments on serializers and controller actions
 
 ## Demo 🎬
 
@@ -754,6 +755,17 @@ Specifies where the compiled OpenAPI specification file should be placed.
 ```ruby
 # Place in a custom location
 config.openapi_path = Rails.root.join("docs", "api.yaml")
+```
+
+### `extract_docs`
+
+_Default:_ `true`
+
+Extracts RDoc comments from serializers and controllers to generate `@doc` decorators in TypeSpec output.
+
+```ruby
+# Disable documentation extraction
+config.extract_docs = false
 ```
 
 ## Contact ✉️
