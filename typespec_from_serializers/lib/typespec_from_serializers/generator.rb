@@ -30,6 +30,21 @@ module TypeSpecFromSerializers
   module Linting
     extend self
 
+    @warning_count = 0
+
+    def reset_count
+      @warning_count = 0
+    end
+
+    def warning_count
+      @warning_count
+    end
+
+    def print_summary
+      return if @warning_count == 0
+      puts "\nTypeSpec generation completed with #{@warning_count} lint warning#{'s' unless @warning_count == 1}"
+    end
+
     # Internal: Lints for missing parameter types
     def missing_param_types(controller, route, path_param_names, param_types, config)
       return unless enabled?(config.linting, :missing_param_types)
@@ -37,6 +52,7 @@ module TypeSpecFromSerializers
       missing_path_params = path_param_names.select { |name| !param_types.key?(name) }
 
       unless missing_path_params.empty?
+        @warning_count += 1
         location = "#{controller.camelize}#{config.controller_suffix}##{route[:action]}"
         warn "TypeSpec Lint: Missing type for path parameter(s) #{missing_path_params.join(', ')} in #{location} (#{route[:method]} #{route[:path]}). Defaulting to 'string'."
       end
@@ -47,6 +63,7 @@ module TypeSpecFromSerializers
       return unless enabled?(config.linting, :unknown_response_types)
 
       if response_type == "unknown"
+        @warning_count += 1
         location = "#{controller.camelize}#{config.controller_suffix}##{route[:action]}"
         warn "TypeSpec Lint: Unknown response type for #{location} (#{route[:method]} #{route[:path]}). Consider adding a serializer or explicit type annotation."
       end
@@ -57,6 +74,7 @@ module TypeSpecFromSerializers
       return unless enabled?(config.linting, :missing_documentation) && config.extract_docs
 
       if doc.nil?
+        @warning_count += 1
         location = "#{controller.camelize}#{config.controller_suffix}##{route[:action]}"
         warn "TypeSpec Lint: Missing documentation for #{location} (#{route[:method]} #{route[:path]}). Consider adding an RDoc comment."
       end
@@ -68,6 +86,7 @@ module TypeSpecFromSerializers
 
       duplicates = name_counts.select { |_, count| count > 1 }
       duplicates.each do |action, count|
+        @warning_count += 1
         ops = operations.select { |op| op.action == action }
         methods = ops.map { |op| op.method }.join(', ')
         warn "TypeSpec Lint: Action '#{action}' used for multiple routes (#{methods}). Using method suffix to differentiate."
@@ -79,6 +98,7 @@ module TypeSpecFromSerializers
       return unless enabled?(config.linting, :type_inference_failures)
 
       if property.type.nil? && explicit_type.nil?
+        @warning_count += 1
         warn "TypeSpec Lint: Could not infer type for '#{property.name}' in #{serializer_name}. Consider adding explicit type annotation."
       end
     end
@@ -598,6 +618,8 @@ module TypeSpecFromSerializers
 
     # Public: Generates code for all serializers in the app.
     def generate(force: ENV["SERIALIZER_TYPESPEC_FORCE"])
+      Linting.reset_count
+
       @force_generation = force
       clean_output_dir if force && config.output_dir.exist?
 
@@ -613,6 +635,8 @@ module TypeSpecFromSerializers
       serializers.each do |serializer|
         generate_model_for(serializer)
       end
+
+      Linting.print_summary
 
       {serializers: serializers, controllers: controllers}
     end
