@@ -1,5 +1,10 @@
 # TypeSpec From Serializers Changelog
 
+## [0.5.1] - 2025-12-22
+
+### Fixed
+- Routing patches now included in DSL module for production use
+
 ## [0.5.0] - 2025-12-22
 
 ### Fixed
