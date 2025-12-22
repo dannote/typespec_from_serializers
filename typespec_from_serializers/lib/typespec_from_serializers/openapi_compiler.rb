@@ -49,6 +49,10 @@ module TypeSpecFromSerializers
         unless config.openapi_path.exist?
           raise CompilationError, "OpenAPI output not found at: #{config.openapi_path}"
         end
+
+        # Clean up TypeSpec's default output directory
+        tsp_output = typespec_dir.join("tsp-output")
+        FileUtils.rm_rf(tsp_output) if tsp_output.exist?
       rescue TypeSpecFromSerializers::Runner::MissingExecutableError => e
         raise CompilationError, <<~ERROR
           #{e.message}

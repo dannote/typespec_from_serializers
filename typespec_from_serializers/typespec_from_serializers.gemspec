@@ -18,6 +18,7 @@ Gem::Specification.new do |s|
   s.add_dependency "listen", "~> 3.2"
   s.add_dependency "rbi", "~> 0.3"
   s.add_dependency "prism", ">= 1.0.0"
+  s.add_dependency "rdoc", ">= 7.0"
 
   s.add_development_dependency "bundler", "~> 2"
   s.add_development_dependency "rake", "~> 13"

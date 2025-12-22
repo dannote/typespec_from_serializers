@@ -1,5 +1,15 @@
 # TypeSpec From Serializers Changelog
 
+## [0.3.1] - 2025-12-22
+
+### Fixed
+- Fix routes cache key to include documentation field (now uses `inspect` for all fields)
+- Clean up `tsp-output` directory after OpenAPI compilation
+- Make OpenAPI output deterministic by sorting body parameters alphabetically
+
+### Added
+- Tests for cache key invalidation when documentation changes
+
 ## [0.3.0] - 2025-12-20
 
 ### Features

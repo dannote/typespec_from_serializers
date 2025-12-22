@@ -575,7 +575,7 @@ module TypeSpecFromSerializers
       return [] unless defined?(Rails) && Rails.application
 
       routes, controllers = collect_rails_routes
-      cache_key = routes.map { |r| r.operations.map { |op| "#{op.method}#{r.path}#{op.action}" }.join }.join
+      cache_key = routes.map(&:inspect).join
       write_if_changed(filename: "routes", cache_key: cache_key) {
         routes_content(routes)
       }
@@ -770,7 +770,7 @@ module TypeSpecFromSerializers
     # Internal: Builds body parameters (excludes path params, only for non-GET)
     def build_body_params(http_method, path_param_names, param_types)
       return {} if http_method == "GET"
-      param_types.reject { |key, _| path_param_names.include?(key) }
+      param_types.reject { |key, _| path_param_names.include?(key) }.sort.to_h
     end
 
     # Internal: Infers operation response type from route
