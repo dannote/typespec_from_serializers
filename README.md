@@ -768,6 +768,23 @@ Extracts RDoc comments from serializers and controllers to generate `@doc` decor
 config.extract_docs = false
 ```
 
+### `linting`
+
+_Default:_ All rules enabled
+
+Warns about potential issues during generation (missing types, undocumented endpoints, etc).
+
+```ruby
+# Disable all linting
+config.linting = false
+
+# Disable specific rules
+config.linting = {
+  missing_param_types: false,
+  missing_documentation: false,
+}
+```
+
 ## Contact ✉️
 
 Please use [Issues] to report bugs you find, and [Discussions] to make feature requests or get help.

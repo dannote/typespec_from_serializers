@@ -1,5 +1,13 @@
 # TypeSpec From Serializers Changelog
 
+## [0.4.0] - 2025-12-22
+
+### Added
+- Linting system with 5 configurable rules to catch common issues during generation
+
+### Fixed
+- Add `implicitOptionality: true` to PATCH decorators to suppress TypeSpec 1.0+ warnings
+
 ## [0.3.1] - 2025-12-22
 
 ### Fixed

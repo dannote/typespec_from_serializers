@@ -26,6 +26,72 @@ module TypeSpecFromSerializers
   MEMBER_ACTIONS = %w[show update destroy].freeze
   SPECIAL_ACTIONS = %w[new edit].freeze
 
+  # Internal: Linting methods for TypeSpec generation
+  module Linting
+    extend self
+
+    # Internal: Lints for missing parameter types
+    def missing_param_types(controller, route, path_param_names, param_types, config)
+      return unless enabled?(config.linting, :missing_param_types)
+
+      missing_path_params = path_param_names.select { |name| !param_types.key?(name) }
+
+      unless missing_path_params.empty?
+        location = "#{controller.camelize}#{config.controller_suffix}##{route[:action]}"
+        warn "TypeSpec Lint: Missing type for path parameter(s) #{missing_path_params.join(', ')} in #{location} (#{route[:method]} #{route[:path]}). Defaulting to 'string'."
+      end
+    end
+
+    # Internal: Lints for unknown response types
+    def unknown_response_type(controller, route, response_type, config)
+      return unless enabled?(config.linting, :unknown_response_types)
+
+      if response_type == "unknown"
+        location = "#{controller.camelize}#{config.controller_suffix}##{route[:action]}"
+        warn "TypeSpec Lint: Unknown response type for #{location} (#{route[:method]} #{route[:path]}). Consider adding a serializer or explicit type annotation."
+      end
+    end
+
+    # Internal: Lints for missing documentation
+    def missing_documentation(controller, route, doc, config)
+      return unless enabled?(config.linting, :missing_documentation) && config.extract_docs
+
+      if doc.nil?
+        location = "#{controller.camelize}#{config.controller_suffix}##{route[:action]}"
+        warn "TypeSpec Lint: Missing documentation for #{location} (#{route[:method]} #{route[:path]}). Consider adding an RDoc comment."
+      end
+    end
+
+    # Internal: Lints for duplicate action names
+    def ambiguous_operations(name_counts, operations, config)
+      return unless enabled?(config.linting, :ambiguous_operations)
+
+      duplicates = name_counts.select { |_, count| count > 1 }
+      duplicates.each do |action, count|
+        ops = operations.select { |op| op.action == action }
+        methods = ops.map { |op| op.method }.join(', ')
+        warn "TypeSpec Lint: Action '#{action}' used for multiple routes (#{methods}). Using method suffix to differentiate."
+      end
+    end
+
+    # Internal: Lints for type inference failures
+    def type_inference_failure(property, explicit_type, serializer_name, config)
+      return unless enabled?(config.linting, :type_inference_failures)
+
+      if property.type.nil? && explicit_type.nil?
+        warn "TypeSpec Lint: Could not infer type for '#{property.name}' in #{serializer_name}. Consider adding explicit type annotation."
+      end
+    end
+
+    private
+
+    # Internal: Checks if a linting rule is enabled
+    def enabled?(linting_config, rule)
+      return false if linting_config == false
+      linting_config.is_a?(Hash) && linting_config[rule]
+    end
+  end
+
   # Internal: Extensions that simplify the implementation of the generator.
   module SerializerRefinements
     refine String do
@@ -96,7 +162,11 @@ module TypeSpecFromSerializers
                   column_name: options.fetch(:value_from),
                   doc: TypeSpecFromSerializers.config.extract_docs ? RDoc.method_doc(self, options.fetch(:value_from)) : nil,
                 ).tap do |property|
+                  explicit_type = property.type
                   property.infer_typespec_from(model_columns, model_enums, typespec_from, self, model_class)
+
+                  # Linting
+                  TypeSpecFromSerializers::Linting.type_inference_failure(property, explicit_type, self.name, TypeSpecFromSerializers.config)
                 end
               end
             }
@@ -138,6 +208,7 @@ module TypeSpecFromSerializers
     :openapi_path,
     :max_line_length,
     :extract_docs,
+    :linting,
     :root,
     keyword_init: true,
   ) do
@@ -416,14 +487,21 @@ module TypeSpecFromSerializers
     def build_single_line(tsp_method, operation_name)
       params = params_typespec
       params_str = params.empty? ? "()" : "(#{params})"
-      "@#{tsp_method} #{operation_name}#{params_str}: #{response_type.delete(":")};"
+      method_decorator = format_method_decorator(tsp_method)
+      "#{method_decorator} #{operation_name}#{params_str}: #{response_type.delete(":")};"
     end
 
     def multiline_format(route_line, tsp_method, operation_name)
       params_indented = all_params.map { |p| "\n    #{p}," }.join
       return_type = response_type.delete(":")
+      method_decorator = format_method_decorator(tsp_method)
 
-      "#{route_line}@#{tsp_method} #{operation_name}(#{params_indented}\n  ): #{return_type};"
+      "#{route_line}#{method_decorator} #{operation_name}(#{params_indented}\n  ): #{return_type};"
+    end
+
+    def format_method_decorator(tsp_method)
+      # PATCH operations need implicitOptionality flag in TypeSpec 1.0+
+      tsp_method == "patch" ? "@patch(\#{implicitOptionality: true})" : "@#{tsp_method}"
     end
 
     def operation_route_decorator(resource_path)
@@ -723,14 +801,23 @@ module TypeSpecFromSerializers
       param_types = extract_all_param_types(controller, route)
       controller_class = "#{controller.camelize}#{config.controller_suffix}".safe_constantize
 
+      # Linting
+      Linting.missing_param_types(controller, route, path_param_names, param_types, config)
+
+      response_type = infer_operation_response_type(route)
+      doc = config.extract_docs && controller_class ? RDoc.method_doc(controller_class, route[:action]) : nil
+
+      Linting.unknown_response_type(controller, route, response_type, config)
+      Linting.missing_documentation(controller, route, doc, config)
+
       Operation.new(
         method: route[:method],
         action: simplify_operation_name(route),
         path: route[:path],
         path_params: build_path_params(path_param_names, param_types),
         body_params: build_body_params(route[:method], path_param_names, param_types),
-        response_type: infer_operation_response_type(route),
-        doc: config.extract_docs && controller_class ? RDoc.method_doc(controller_class, route[:action]) : nil,
+        response_type: response_type,
+        doc: doc,
       )
     end
 
@@ -785,6 +872,9 @@ module TypeSpecFromSerializers
     def make_operation_names_unique(operations)
       name_counts = operations.group_by(&:action).transform_values(&:count)
       name_usage = Hash.new(0)
+
+      # Linting
+      Linting.ambiguous_operations(name_counts, operations, config)
 
       operations.map do |op|
         next op unless name_counts[op.action] > 1
@@ -1294,6 +1384,15 @@ module TypeSpecFromSerializers
 
         # Extract documentation from RDoc comments
         extract_docs: true,
+
+        # Linting configuration
+        linting: {
+          missing_param_types: true,
+          unknown_response_types: true,
+          missing_documentation: true,
+          ambiguous_operations: true,
+          type_inference_failures: true,
+        },
 
         # Project root directory
         root: root,
