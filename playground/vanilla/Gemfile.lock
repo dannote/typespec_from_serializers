@@ -1,7 +1,7 @@
 PATH
   remote: ../..
   specs:
-    typespec_from_serializers (0.5.1)
+    typespec_from_serializers (0.5.2)
       listen (~> 3.2)
       oj_serializers (~> 2.0, >= 2.0.2)
       prism (>= 1.0.0)
@@ -188,7 +188,7 @@ GEM
       rbs (>= 3.4.4)
     rbs (3.9.5)
       logger
-    rdoc (7.0.1)
+    rdoc (7.0.2)
       erb
       psych (>= 4.0.0)
       tsort

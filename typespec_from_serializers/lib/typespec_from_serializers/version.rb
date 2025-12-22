@@ -2,5 +2,5 @@
 
 module TypeSpecFromSerializers
   # Public: This library adheres to semantic versioning.
-  VERSION = "0.5.1"
+  VERSION = "0.5.2"
 end

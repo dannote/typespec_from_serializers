@@ -1,5 +1,10 @@
 # TypeSpec From Serializers Changelog
 
+## [0.5.2] - 2025-12-22
+
+### Fixed
+- File permissions for all library files (now world-readable)
+
 ## [0.5.1] - 2025-12-22
 
 ### Fixed
