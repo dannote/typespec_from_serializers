@@ -22,7 +22,7 @@ gem "types_from_serializers"
 gem "typespec_from_serializers", path: "../.."
 
 # Use SQL Lite as the database.
-gem "sqlite3"
+gem "sqlite3", "~> 1.4"
 
 # Use Inertia.js as the nexus between Rails and Vue (https://inertiajs.com/)
 gem "inertia_rails", ">= 1.2.2"

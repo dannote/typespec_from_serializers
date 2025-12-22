@@ -6,10 +6,14 @@ require "vanilla/config/environment"
 describe "Linting" do
   let(:output_dir) { Pathname.new File.expand_path("../support/generated", __dir__) }
 
-  original_config = TypeSpecFromSerializers::Config.new TypeSpecFromSerializers.config.clone.to_h.transform_values(&:clone)
+  # Deep clone the config to ensure proper test isolation
+  original_config_hash = TypeSpecFromSerializers.config.to_h.transform_values { |v| v.is_a?(Hash) ? v.dup : v }
+  original_config = TypeSpecFromSerializers::Config.new(original_config_hash)
 
   before do
-    TypeSpecFromSerializers.instance_variable_set(:@config, original_config)
+    # Reset to a fresh clone for each test
+    fresh_config = TypeSpecFromSerializers::Config.new(original_config_hash.transform_values { |v| v.is_a?(Hash) ? v.dup : v })
+    TypeSpecFromSerializers.instance_variable_set(:@config, fresh_config)
     TypeSpecFromSerializers.config do |config|
       config.output_dir = output_dir
     end

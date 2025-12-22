@@ -413,7 +413,7 @@ describe "Generator" do
 
         # Should have @get decorators for index and show actions
         expect(content).to include("@get index()")
-        expect(content).to include("@get show(@path id: string)")
+        expect(content).to include("@get show(@path id: int32)")
       end
 
       it "prefers PATCH over PUT for update actions" do
@@ -471,7 +471,7 @@ describe "Generator" do
         # Each resource should have both index and show operations
         composers_section = content[/interface Composers.*?}/m]
         expect(composers_section).to include("index()")
-        expect(composers_section).to include("show(@path id: string)")
+        expect(composers_section).to include("show(@path id: int32)")
       end
     end
 
@@ -480,7 +480,7 @@ describe "Generator" do
         content = routes_file.read
 
         # Show actions should have id parameter
-        expect(content).to include("show(@path id: string)")
+        expect(content).to include("show(@path id: int32)")
       end
 
       it "generates array response types for index actions" do
@@ -494,7 +494,7 @@ describe "Generator" do
         content = routes_file.read
 
         # Show actions should return single objects
-        expect(content).to match(/show\(@path id: string\): \w+;/)
+        expect(content).to match(/show\(@path id: int32\): \w+;/)
       end
     end
 
@@ -540,7 +540,7 @@ describe "Generator" do
 
         # Short operations like index() should be on single lines
         expect(content).to match(/@get \w+\(\): \w+\[\];/)
-        expect(content).to match(/@get \w+\(@path id: string\): \w+;/)
+        expect(content).to match(/@get \w+\(@path id: int32\): \w+;/)
       end
     end
   end

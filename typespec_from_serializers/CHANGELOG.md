@@ -1,5 +1,10 @@
 # TypeSpec From Serializers Changelog
 
+## [0.5.0] - 2025-12-22
+
+### Fixed
+- Route parameter typing with `type:` now works correctly without interfering with Rails routing
+
 ## [0.4.0] - 2025-12-22
 
 ### Added

@@ -787,7 +787,7 @@ module TypeSpecFromSerializers
           path: path,
           response_type: response_type,
           route_name: route_name,
-          param_types: route.defaults[:type] || {},
+          param_types: route.defaults[:__typespec_types] || {},
         }
       end
 
