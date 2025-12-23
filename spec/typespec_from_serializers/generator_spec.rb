@@ -580,6 +580,10 @@ describe "Generator" do
       it "extracts types from type DSL declarations" do
         # Create a test controller with type DSL
         test_controller = Class.new(ApplicationController) do
+          def create
+            video_params
+          end
+
           type id: Integer, title: String
           def video_params
             {id: params[:id].to_i, title: params[:title].to_s}
@@ -587,7 +591,7 @@ describe "Generator" do
         end
         stub_const("TestController", test_controller)
 
-        param_types = TypeSpecFromSerializers.send(:extract_param_types_from_controller, TestController, "show")
+        param_types = TypeSpecFromSerializers.send(:extract_param_types_from_controller, TestController, :create)
 
         expect(param_types["id"]).to eq("int32")
         expect(param_types["title"]).to eq("string")
@@ -599,6 +603,10 @@ describe "Generator" do
         end
 
         test_controller = Class.new(ApplicationController) do
+          def create
+            video_parameters
+          end
+
           type id: Integer
           def video_parameters
             {id: params[:id].to_i}
@@ -606,7 +614,7 @@ describe "Generator" do
         end
         stub_const("TestController", test_controller)
 
-        param_types = TypeSpecFromSerializers.send(:extract_param_types_from_controller, TestController, "show")
+        param_types = TypeSpecFromSerializers.send(:extract_param_types_from_controller, TestController, :create)
 
         expect(param_types["id"]).to eq("int32")
       end
@@ -625,11 +633,40 @@ describe "Generator" do
         # Should return empty since no types declared
         expect(param_types).to eq({})
       end
+
+      it "extracts types transitively through intermediate method calls" do
+        # Create a test controller where action calls a helper that calls *_params
+        test_controller = Class.new(ApplicationController) do
+          def search
+            apply_filters
+          end
+
+          def apply_filters
+            filter_params
+          end
+
+          type query: String, page: Integer
+          def filter_params
+            params.permit(:query, :page)
+          end
+        end
+        stub_const("TestController", test_controller)
+
+        param_types = TypeSpecFromSerializers.send(:extract_param_types_from_controller, TestController, :search)
+
+        expect(param_types["query"]).to eq("string")
+        expect(param_types["page"]).to eq("int32")
+      end
     end
 
     context "priority and fallback" do
-      it "handles multiple param methods" do
+      it "handles multiple param methods called by same action" do
         test_controller = Class.new(ApplicationController) do
+          def show
+            video_params
+            article_params
+          end
+
           type id: Integer
           def video_params
             {id: params[:id].to_i}
@@ -642,9 +679,9 @@ describe "Generator" do
         end
         stub_const("TestController", test_controller)
 
-        param_types = TypeSpecFromSerializers.send(:extract_param_types_from_controller, TestController, "show")
+        param_types = TypeSpecFromSerializers.send(:extract_param_types_from_controller, TestController, :show)
 
-        # Should extract from both methods
+        # Should extract from both methods called by action
         expect(param_types["id"]).to eq("int32")
         expect(param_types["slug"]).to eq("string")
       end

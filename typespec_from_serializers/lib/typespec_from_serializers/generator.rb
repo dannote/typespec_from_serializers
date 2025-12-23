@@ -847,7 +847,10 @@ module TypeSpecFromSerializers
 
     # Internal: Extracts all parameter types from route metadata and controller DSL
     def extract_all_param_types(controller, route)
+      # Route-level types are for path params only - filter to actual path params
+      path_param_names = route[:path].scan(/:([a-zA-Z_][a-zA-Z0-9_]*)/).flatten
       route_param_types = route[:param_types]
+        .select { |k, _| path_param_names.include?(k.to_s) }
         .transform_keys(&:to_s)
         .transform_values { |v| map_type_class_to_typespec(v) }
 
@@ -1133,17 +1136,38 @@ module TypeSpecFromSerializers
       {}
     end
 
-    # Internal: Finds *_params methods that are called by a specific action method
+    # Internal: Finds *_params methods that are called by a specific action method (transitively)
     def find_params_methods_called_by_action(controller_class, action)
       method_node = find_action_node(controller_class, action)
       return [] unless method_node
 
+      method = controller_class.instance_method(action)
+      file_path, = method.source_location
       suffix = config.param_method_suffix
-      find_method_calls(method_node)
-        .select { |name| name.end_with?(suffix) }
-        .map(&:to_sym)
+
+      find_params_methods_transitively(file_path, method_node, suffix)
     rescue
       []
+    end
+
+    # Internal: Recursively finds *_params methods through intermediate method calls
+    def find_params_methods_transitively(file_path, node, suffix, visited = Set.new)
+      calls = find_method_calls(node)
+      params_methods = calls.select { |name| name.end_with?(suffix) }.map(&:to_sym)
+
+      # Follow non-params method calls defined in the same file
+      calls.each do |call_name|
+        next if call_name.end_with?(suffix)
+        next if visited.include?(call_name)
+
+        visited << call_name
+        called_node = find_def_node(file_path) { |n| n.name.to_s == call_name }
+        next unless called_node
+
+        params_methods.concat(find_params_methods_transitively(file_path, called_node, suffix, visited))
+      end
+
+      params_methods.uniq
     end
 
     # Internal: Finds the AST node for a controller action method.
@@ -1154,7 +1178,7 @@ module TypeSpecFromSerializers
       file_path, line_number = method.source_location
       return unless file_path && File.exist?(file_path)
 
-      find_method_at_line(file_path, line_number)
+      find_def_node(file_path) { |node| node.location.start_line == line_number }
     end
 
     # Internal: Parses a Ruby file and caches the result.
@@ -1166,28 +1190,29 @@ module TypeSpecFromSerializers
       end
     end
 
-    # Internal: Finds a DefNode at the exact line number.
-    def find_method_at_line(file_path, line_number)
+    # Internal: Traverses all descendant nodes in BFS order.
+    def each_descendant(node)
+      return enum_for(:each_descendant, node) unless block_given?
+      queue = [node]
+      while (current = queue.shift)
+        yield current
+        queue.concat(current.compact_child_nodes)
+      end
+    end
+
+    # Internal: Finds a DefNode matching the given condition.
+    def find_def_node(file_path)
       ast = parse_file_cached(file_path)
       return unless ast
-
-      queue = [ast]
-      while (node = queue.shift)
-        return node if node.is_a?(Prism::DefNode) && node.location.start_line == line_number
-        queue.concat(node.compact_child_nodes)
-      end
-      nil
+      each_descendant(ast).find { |node| node.is_a?(Prism::DefNode) && yield(node) }
     end
 
     # Internal: Finds all unqualified method call names in an AST node.
     def find_method_calls(node)
-      calls = []
-      queue = [node]
-      while (current = queue.shift)
-        calls << current.name.to_s if current.is_a?(Prism::CallNode) && current.receiver.nil?
-        queue.concat(current.compact_child_nodes)
-      end
-      calls.uniq
+      each_descendant(node)
+        .select { |n| n.is_a?(Prism::CallNode) && n.receiver.nil? }
+        .map { |n| n.name.to_s }
+        .uniq
     end
 
     # Internal: Extracts key-value types from Sorbet hash type

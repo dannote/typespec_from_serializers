@@ -5,20 +5,16 @@ SimpleCov.start {
 }
 
 ENV["RACK_ENV"] = "development"
-require "rails"
-require "oj_serializers"
-require "typespec_from_serializers"
-require "rspec/given"
 
-begin
-  require "sorbet-runtime"
-rescue LoadError
-  # sorbet-runtime is optional
-end
+# Add playground to load path so specs can require vanilla/config/boot
+$LOAD_PATH.push File.expand_path("../playground", __dir__)
+
+# Require oj_serializers for tests that need it
+require "oj_serializers"
+
+require "rspec/given"
 
 begin
   require "pry-byebug"
 rescue LoadError
 end
-
-$LOAD_PATH.push File.expand_path("../playground", __dir__)

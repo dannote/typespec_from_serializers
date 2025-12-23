@@ -3,7 +3,11 @@ Rails.application.routes.draw do
 
   defaults export: true do
     resources :composers, only: %i[index show], type: {id: Integer}
-    resources :songs, only: %i[index show], type: {id: Integer}
+    resources :songs, only: %i[index show], type: {id: Integer} do
+      collection do
+        post :search
+      end
+    end
     resources :videos, only: %i[index show], type: {id: Integer}
     # :nodoc:
     get :health, to: "health#show"

@@ -1,5 +1,11 @@
 # TypeSpec From Serializers Changelog
 
+## [0.5.4] - 2025-12-23
+
+### Fixed
+- Transitive params extraction now follows method calls through intermediate methods
+- Route-level `type:` declarations now only apply to actual path params (not inherited by collection routes)
+
 ## [0.5.3] - 2025-12-23
 
 ### Fixed
