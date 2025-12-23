@@ -980,56 +980,19 @@ module TypeSpecFromSerializers
 
     # Internal: Extracts serializer class from controller method source using Prism AST
     def extract_serializer_from_controller_method(controller_class, action)
-      return nil unless controller_class.method_defined?(action)
-
-      method = controller_class.instance_method(action)
-      source_location = method.source_location
-      return nil unless source_location
-
-      file_path, line_number = source_location
-      return nil unless File.exist?(file_path)
-
-      # Parse the file with Prism
-      result = Prism.parse_file(file_path)
-      return nil unless result.success?
-
-      # Find the specific method definition node
-      method_finder = MethodFinder.new(action.to_s, line_number)
-      method_finder.visit(result.value)
-      return nil unless method_finder.method_node
+      method_node = find_action_node(controller_class, action)
+      return unless method_node
 
       # Find serializer references only within this method
       visitor = SerializerVisitor.new
-      visitor.visit(method_finder.method_node)
+      visitor.visit(method_node)
 
       # Try to constantize any found serializers and return the first valid one
       visitor.serializer_names.filter_map(&:safe_constantize).first
     rescue
-      # File read or parsing error - return nil
       nil
     end
 
-    # Internal: Prism visitor to find a specific method definition by name and line
-    class MethodFinder < Prism::Visitor
-      attr_reader :method_node
-
-      def initialize(method_name, line_number)
-        super()
-        @method_name = method_name
-        @line_number = line_number
-        @method_node = nil
-      end
-
-      def visit_def_node(node)
-        # Match by method name and line number proximity
-        if node.name.to_s == @method_name &&
-            node.location.start_line <= @line_number &&
-            node.location.end_line >= @line_number
-          @method_node = node
-        end
-        super
-      end
-    end
 
     # Internal: Prism visitor to extract serializer class names from AST
     class SerializerVisitor < Prism::Visitor
@@ -1124,10 +1087,8 @@ module TypeSpecFromSerializers
     def extract_param_types_from_controller(controller_class, action)
       param_types = {}
 
-      # Extract from *_params methods with type DSL declarations
-      # Include private methods since *_params methods are typically private
-      param_methods = (controller_class.instance_methods(false) | controller_class.private_instance_methods(false))
-        .select { |m| m.to_s.end_with?(config.param_method_suffix) }
+      # Find which *_params methods are called by this action
+      param_methods = find_params_methods_called_by_action(controller_class, action)
 
       param_methods.each do |method_name|
         type_found = false
@@ -1170,6 +1131,63 @@ module TypeSpecFromSerializers
       param_types
     rescue
       {}
+    end
+
+    # Internal: Finds *_params methods that are called by a specific action method
+    def find_params_methods_called_by_action(controller_class, action)
+      method_node = find_action_node(controller_class, action)
+      return [] unless method_node
+
+      suffix = config.param_method_suffix
+      find_method_calls(method_node)
+        .select { |name| name.end_with?(suffix) }
+        .map(&:to_sym)
+    rescue
+      []
+    end
+
+    # Internal: Finds the AST node for a controller action method.
+    def find_action_node(controller_class, action)
+      return unless controller_class.method_defined?(action)
+
+      method = controller_class.instance_method(action)
+      file_path, line_number = method.source_location
+      return unless file_path && File.exist?(file_path)
+
+      find_method_at_line(file_path, line_number)
+    end
+
+    # Internal: Parses a Ruby file and caches the result.
+    def parse_file_cached(file_path)
+      @parsed_files ||= {}
+      @parsed_files[file_path] ||= begin
+        result = Prism.parse_file(file_path)
+        result.success? ? result.value : nil
+      end
+    end
+
+    # Internal: Finds a DefNode at the exact line number.
+    def find_method_at_line(file_path, line_number)
+      ast = parse_file_cached(file_path)
+      return unless ast
+
+      queue = [ast]
+      while (node = queue.shift)
+        return node if node.is_a?(Prism::DefNode) && node.location.start_line == line_number
+        queue.concat(node.compact_child_nodes)
+      end
+      nil
+    end
+
+    # Internal: Finds all unqualified method call names in an AST node.
+    def find_method_calls(node)
+      calls = []
+      queue = [node]
+      while (current = queue.shift)
+        calls << current.name.to_s if current.is_a?(Prism::CallNode) && current.receiver.nil?
+        queue.concat(current.compact_child_nodes)
+      end
+      calls.uniq
     end
 
     # Internal: Extracts key-value types from Sorbet hash type

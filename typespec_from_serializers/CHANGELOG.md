@@ -1,5 +1,10 @@
 # TypeSpec From Serializers Changelog
 
+## [0.5.3] - 2025-12-23
+
+### Fixed
+- Body params now scoped per action by analyzing which `*_params` methods are called
+
 ## [0.5.2] - 2025-12-22
 
 ### Fixed
