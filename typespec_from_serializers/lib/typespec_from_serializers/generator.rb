@@ -213,6 +213,7 @@ module TypeSpecFromSerializers
     :custom_typespec_dir,
     :name_from_serializer,
     :controller_suffix,
+    :route_namespace_suffix,
     :param_method_suffix,
     :global_types,
     :sort_properties_by,
@@ -653,9 +654,10 @@ module TypeSpecFromSerializers
     # Internal: Defines a TypeSpec model for the serializer.
     def generate_model_for(serializer)
       model = serializer.tsp_model
+      content = serializer_model_content(model)
 
-      write_if_changed(filename: "models/#{model.filename}", cache_key: model.inspect, extension: "tsp") {
-        serializer_model_content(model)
+      write_if_changed(filename: "models/#{model.filename}", cache_key: content, extension: "tsp") {
+        content
       }
     rescue => e
       $stderr.puts "ERROR in generate_model_for(#{serializer.name}): #{e.class}: #{e.message}"
@@ -665,10 +667,10 @@ module TypeSpecFromSerializers
 
     # Internal: Allows to import all serializer types from a single file.
     def generate_index_file
-      cache_key = all_serializer_files.map { |file| file.delete_prefix(root.to_s) }.join
-      write_if_changed(filename: "index", cache_key: cache_key) {
-        load_serializers(all_serializer_files)
-        serializers_index_content(loaded_serializers)
+      load_serializers(all_serializer_files)
+      content = serializers_index_content(loaded_serializers)
+      write_if_changed(filename: "index", cache_key: content) {
+        content
       }
     end
 
@@ -677,9 +679,9 @@ module TypeSpecFromSerializers
       return [] unless defined?(Rails) && Rails.application
 
       routes, controllers = collect_rails_routes
-      cache_key = routes.map(&:inspect).join
-      write_if_changed(filename: "routes", cache_key: cache_key) {
-        routes_content(routes)
+      content = routes_content(routes)
+      write_if_changed(filename: "routes", cache_key: content) {
+        content
       }
 
       # Return list of controller class names
@@ -811,8 +813,10 @@ module TypeSpecFromSerializers
       operations = ns_routes.map { |route| build_operation(controller, route) }
       operations = make_operation_names_unique(operations)
 
+      interface_name = disambiguate_route_name(controller.tr("/", "_").camelize)
+
       Resource.new(
-        name: controller.tr("/", "_").camelize,
+        name: interface_name,
         path: base_path.start_with?("/") ? base_path : "/#{base_path}",
         operations: operations,
         parent_namespace: parent_namespace,
@@ -915,11 +919,21 @@ module TypeSpecFromSerializers
     end
 
     # Internal: Extracts parent namespace from nested route paths
-    # E.g., "/lands/{land_id}/comments" → "Land"
-    #       "/tasks/{task_id}/comments" → "Task"
+    # E.g., "/lands/{land_id}/comments" → "LandRoutes" (suffixed to avoid model collision)
+    #       "/tasks/{task_id}/comments" → "TaskRoutes"
     def extract_parent_namespace(path)
       # Match pattern like /resource/:resource_id/nested (Rails uses : notation)
-      path[%r{^/([^/]+)/:[^/]+_id/}, 1]&.singularize&.camelize
+      name = path[%r{^/([^/]+)/:[^/]+_id/}, 1]&.singularize&.camelize
+      return unless name
+
+      disambiguate_route_name(name)
+    end
+
+    # Internal: Suffixes a route namespace/interface name if it collides with a model name.
+    # E.g., "Task" → "TaskRoutes" when TaskSerializer exists.
+    def disambiguate_route_name(name)
+      model_names = loaded_serializers.map { |s| s.tsp_name }
+      model_names.include?(name) ? "#{name}#{config.route_namespace_suffix}" : name
     end
 
     # Internal: Simplifies operation name using REST conventions
@@ -1367,6 +1381,9 @@ module TypeSpecFromSerializers
 
         # Controller suffix for route generation reporting
         controller_suffix: "Controller",
+
+        # Suffix for route namespaces/interfaces that collide with model names
+        route_namespace_suffix: "Routes",
 
         # Types that don't need to be imported in TypeSpec.
         global_types: [
