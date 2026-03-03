@@ -1,5 +1,12 @@
 # TypeSpec From Serializers Changelog
 
+## [0.6.0] - 2026-03-03
+
+### Added
+- Automatic route namespace/interface disambiguation: names that collide with model names are suffixed (e.g., `namespace Task` → `namespace TaskRoutes` when `TaskSerializer` exists)
+- New `route_namespace_suffix` config option (default: `"Routes"`) to control the disambiguation suffix
+- Content-based cache keys: files are only rewritten when generated output actually changes, eliminating unnecessary diffs from internal representation changes
+
 ## [0.5.4] - 2025-12-23
 
 ### Fixed
